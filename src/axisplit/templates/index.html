@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>axisplit</h1>
+<p class="muted">Splitwise/Tricount for group receipts — snap a photo, OCR the items,
+drop a colored token on each item for whoever had it.</p>
+{% if who %}
+<form method="post" action="/tabs" class="row">
+  <input name="name" placeholder="New tab name (e.g. Brno dinner)" required maxlength="64">
+  <button>Create tab</button>
+</form>
+{% else %}
+<p><a class="btn" href="/claim?next=/">Pick a username to start</a></p>
+{% endif %}
+{% endblock %}

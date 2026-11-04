@@ -1,0 +1,11 @@
+{
+  "image": "photo.jpg",
+  "currency": "EUR",
+  "items": [
+    {"label": "GrillFor2", "price_cents": 2000, "bbox": [0.07, 0.16, 0.61, 0.21]},
+    {"label": "Caesar Salad", "price_cents": 1000, "bbox": [0.07, 0.23, 0.60, 0.28]},
+    {"label": "Nachos", "price_cents": 500, "bbox": [0.07, 0.30, 0.52, 0.35]},
+    {"label": "Beer x2", "price_cents": 400, "bbox": [0.07, 0.37, 0.55, 0.42]},
+    {"label": "Cola Zero", "price_cents": 200, "bbox": [0.07, 0.44, 0.58, 0.49]}
+  ]
+}

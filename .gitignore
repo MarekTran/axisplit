@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pgdata/
+data/uploads/
+data/*.db
+axisplit.db
+dist/
+*.egg-info/
+bench/cases/*/*.jpg
+bench/cases/*/*.png
+bench/cases/*/*.webp

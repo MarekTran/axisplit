@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Join “{{ tab.name }}”</h1>
+<p class="muted">This link is missing its invite secret. Someone in the tab can paste
+the full share link (with <code>?s=…</code>) into your group chat.</p>
+<form method="get" action="/t/{{ tab.id }}">
+  <input name="s" placeholder="invite secret" required>
+  <button>Join</button>
+</form>
+{% endblock %}

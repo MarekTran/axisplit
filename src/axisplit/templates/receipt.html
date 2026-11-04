@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ receipt.title }} — {{ tab.name }}{% endblock %}
+{% block content %}
+<div id="board"
+     data-receipt="{{ receipt.id }}"
+     data-who="{{ who }}"
+     data-members='{{ members | map(attribute="username") | list | tojson }}'
+     data-colors='{{ colors | tojson }}'>
+  <h1><a href="/t/{{ tab.id }}" class="crumb">{{ tab.name }}</a> / {{ receipt.title }}</h1>
+  <p><span class="badge" id="status">{{ receipt.status }}</span>
+     <span class="muted" id="presence"></span></p>
+
+  {% if not who %}
+  <p><a class="btn" href="/claim?next=/r/{{ receipt.id }}">claim your name to place tokens</a></p>
+  {% endif %}
+
+  <div class="tokenbar" id="tokenbar" aria-label="tokens">
+    {% for m in members %}
+    <button class="token" data-user="{{ m.username }}" style="--c: {{ m.color }}"
+            title="tap token, then tap an item box">{{ m.username }}</button>
+    {% endfor %}
+  </div>
+
+  <div class="imgwrap" id="imgwrap">
+    <img src="/uploads/{{ receipt.image_path }}" alt="receipt photo">
+    {% for item in items %}
+    <div class="box" data-item="{{ item.id }}" style="left: {{ item.x * 100 }}%; top: {{ item.y * 100 }}%;
+         width: {{ item.w * 100 }}%; height: {{ item.h * 100 }}%"
+         title="tap to place selected token">
+      <span class="lbl">{{ item.label }} — {{ item.price_cents | eur }}</span>
+      <span class="tokens">
+        {% for t in item.tokens %}
+        <span class="pip" data-user="{{ t.username }}" style="--c: {{ (members | selectattr('username','equalto',t.username) | first).color or '#888' }}"
+              title="tap to remove {{ t.username }}'s token"></span>
+        {% endfor %}
+      </span>
+      {% if item.ocr_confidence is not none %}<span class="conf">ocr {{ '%.0f' | format(item.ocr_confidence * 100) }}%</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <p class="muted hint">Tap a name token above, then tap an item box. Tap a pip inside a
+    box to remove it. Boxes come from OCR when available — add missing lines below.</p>
+
+  <form method="post" action="/r/{{ receipt.id }}/items" class="row">
+    <input name="label" placeholder="item label" required maxlength="120">
+    <input name="price" placeholder="price e.g. 12,50" required inputmode="decimal">
+    <button>Add item</button>
+  </form>
+
+  <div class="confirmbar">
+    <button id="confirm-btn" class="btn-primary">Confirm split</button>
+    <span id="confirmed" class="muted"></span>
+  </div>
+</div>
+<script src="/static/receipt.js" defer></script>
+{% endblock %}

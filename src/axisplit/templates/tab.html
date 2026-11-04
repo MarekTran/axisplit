@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ tab.name }} — axisplit{% endblock %}
+{% block content %}
+<h1>{{ tab.name }}</h1>
+<p class="share"><input readonly value="{{ request.base_url }}t/{{ tab.id }}?s={{ tab.invite_secret }}"
+   onclick="this.select()" placeholder="share link"></p>
+
+<h2>Members</h2>
+<ul class="chips">
+  {% for m in members %}
+    <li><span class="dot" style="--c: {{ m.color }}"></span>{{ m.username }}{% if m.username == who %} <em>(you)</em>{% endif %}</li>
+  {% endfor %}
+</ul>
+<form method="post" action="/t/{{ tab.id }}/members" class="row">
+  <input name="username" placeholder="add member by username" required maxlength="32">
+  <button>Add</button>
+</form>
+
+<h2>Receipts</h2>
+<form method="post" action="/t/{{ tab.id }}/receipts" enctype="multipart/form-data">
+  <input type="file" name="image" accept="image/jpeg,image/png,image/webp" required>
+  <button>Upload receipt</button>
+</form>
+<ul class="receipts">
+  {% for row in rows %}
+  <li>
+    <a href="/r/{{ row.receipt.id }}">{{ row.receipt.title }}</a>
+    <span class="badge">{{ row.receipt.status }}</span>
+    <span class="muted">{{ row.total | eur }} · {{ row.lines | length }} items</span>
+  </li>
+  {% else %}
+  <li class="muted">no receipts yet — upload a photo of a check</li>
+  {% endfor %}
+</ul>
+
+<h2>Ledger</h2>
+{% if ledger %}
+<table>
+  <tr><th>who</th><th>owes / gets back</th></tr>
+  {% for user, shares in ledger.items() %}
+  <tr>
+    <td>{{ user }}</td>
+    <td>{{ shares | map(attribute='cents') | sum | eur }}
+        <span class="muted">({{ shares | length }} item shares)</span></td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="muted">Total {{ total_cents | eur }} across {{ rows | length }} receipts.
+Items with no tokens are not split yet.</p>
+{% else %}
+<p class="muted">Nothing split yet.</p>
+{% endif %}
+{% endblock %}

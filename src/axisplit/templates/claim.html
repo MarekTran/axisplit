@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Who are you?</h1>
+<p class="muted">v1 identity is just a username. Anyone with the tab link who types
+your name *is* you — invite friends only from people you trust.</p>
+<form method="post" action="/claim">
+  <input type="hidden" name="next" value="{{ next }}">
+  <input name="username" placeholder="username" required maxlength="32" autofocus>
+  <button>Claim</button>
+</form>
+{% endblock %}
