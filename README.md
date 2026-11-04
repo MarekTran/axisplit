@@ -16,8 +16,12 @@ OCR model (dots.ocr vs Qwen3-VL vs DeepSeek-OCR-2 vs Nanonets vs ...).
 
 ## Dev quickstart (NixOS or any Nix flake machine)
 
+Everything runs inside the pinned flake dev shell — do **not** use your ambient
+Python (the flake pins python312 + postgres; `uv sync` inside it builds the venv
+from the lockfile):
+
 ```bash
-direnv allow            # or: nix develop
+direnv allow            # auto-enter shell, or manually: nix develop
 uv sync --all-extras    # deps into .venv
 uv run uvicorn axisplit.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -27,8 +31,20 @@ photo, add items manually (until the OCR benchmark lands), place tokens,
 confirm. The tab page shows a shareable invite link; open it from your phone
 on the LAN to see live token placement across devices (WebSocket room).
 
-Dev DB is SQLite under `./data/`. Postgres: `nix build .#postgres-init && ./result/bin/pg-dev`,
-then `DATABASE_URL='postgresql+asyncpg://localhost:5433/axisplit' uv run uvicorn ...`.
+Dev DB is SQLite under `./data/`. Postgres (still inside `nix develop`):
+
+```bash
+nix build .#postgres-init && ./result/bin/pg-dev   # starts local server on :5433
+DATABASE_URL='postgresql+asyncpg://'$USER'@localhost:5433/axisplit' \
+  uv run uvicorn axisplit.main:app --reload
+```
+
+Regression tests (both modes verified):
+
+```bash
+bash scripts/smoke.sh          # full HTTP golden path: Adam+Nina split
+uv run python scripts/ws_smoke.py   # live WebSocket broadcast test
+```
 
 ## OCR benchmark
 

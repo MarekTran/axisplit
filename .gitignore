@@ -3,6 +3,8 @@
 __pycache__/
 *.pyc
 .pgdata/
+result
+result-*
 data/uploads/
 data/*.db
 axisplit.db

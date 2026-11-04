@@ -26,9 +26,10 @@
           AXISPLIT_DEV = "1";
 
           shellHook = ''
-            echo "axisplit dev shell: 'just' targets unavailable, use:"
-            echo "  uv sync                      # install deps"
+            echo "axisplit dev shell — typical flow:"
+            echo "  uv sync --all-extras                        # install deps into .venv"
             echo "  uv run uvicorn axisplit.main:app --reload   # http://localhost:8000"
+            echo "  nix build .#postgres-init && ./result/bin/pg-dev   # local Postgres on :5433"
           '';
         };
 
@@ -40,7 +41,8 @@
           fi
           ${pkgs.postgresql}/bin/pg_ctl -D "$PGDATA" -l "$PGDATA/log" -o "-k $PGDATA -p 5433" start
           ${pkgs.postgresql}/bin/createdb -h "$PGDATA" -p 5433 axisplit 2>/dev/null || true
-          echo "postgres up: DATABASE_URL=postgresql+asyncpg://localhost:5433/axisplit?host=$PGDATA"
+          echo "postgres up: DATABASE_URL=postgresql+asyncpg://$USER@localhost:5433/axisplit"
+          echo "stop with: ${pkgs.postgresql}/bin/pg_ctl -D \"$PGDATA\" stop"
         '';
       });
 }
