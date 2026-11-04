@@ -1,6 +1,9 @@
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
+from PIL import Image, ImageOps
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +16,19 @@ from ..ops import add_item, apply_op, get_receipt_items, recompute_status
 from ..templ import templates
 
 router = APIRouter(tags=["receipts"])
+
+
+def normalize_pixels(path: Path) -> None:
+    """Bounding boxes are normalized 0..1 against the *rendered* image.
+    Browsers rotate EXIF-tagged JPEGs when displaying; OCR models see raw
+    pixels. Baking the transpose into the stored file removes that whole class
+    of box-misalignment bugs. Raises on corrupt/truncated images."""
+    with Image.open(path) as im:
+        im = ImageOps.exif_transpose(im)
+        fmt = im.format
+        if im.mode not in ("RGB", "RGBA", "L"):
+            im = im.convert("RGB")
+        im.save(path, format=fmt if fmt in ("JPEG", "PNG", "WEBP") else None)
 
 
 @router.post("/t/{tab_id}/receipts")
@@ -37,6 +53,11 @@ async def upload_receipt(
                 f.close(); dest.unlink(missing_ok=True)
                 raise HTTPException(413, "image too large (max 12 MB)")
             f.write(chunk)
+    try:
+        normalize_pixels(dest)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(415, "could not decode image")
     receipt = Receipt(id=rid, tab_id=tab.id, uploaded_by=member.username, image_path=dest.name,
                       title=image.filename or "Receipt")
     session.add(receipt)

@@ -1,8 +1,13 @@
 """OCR pipeline contract.
 
 Every backend implements extract_items() -> list[ExtractedItem].
-The app treats bboxes as advisory: users can always re-place tokens and edit
-labels/prices, so item RECALL matters more than pixel-perfect IoU.
+The app treats bboxes as advisory: users tap anywhere on the photo and the tap
+snaps to the containing/nearest box, so item RECALL matters more than
+pixel-perfect IoU.
+
+COORDINATE CONTRACT: x/y/w/h are normalized 0..1 against the stored file,
+which is EXIF-transposed at upload time (receipts.normalize_pixels) — raw
+pixels == rendered pixels == the image bytes you receive.
 """
 
 from dataclasses import dataclass

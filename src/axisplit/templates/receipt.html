@@ -38,8 +38,9 @@
     </div>
     {% endfor %}
   </div>
-  <p class="muted hint">Tap a name token above, then tap an item box. Tap a pip inside a
-    box to remove it. Boxes come from OCR when available — add missing lines below.</p>
+  <p class="muted hint">Tap a name token above, then <strong>tap the photo where the item is
+    printed</strong> — the token snaps into the matching OCR box (or the closest one).
+    Tap a pip inside a box to remove it. Add missing lines below.</p>
 
   <form method="post" action="/r/{{ receipt.id }}/items" class="row">
     <input name="label" placeholder="item label" required maxlength="120">

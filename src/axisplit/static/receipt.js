@@ -24,18 +24,79 @@
   });
   paint();
 
-  // ---- placement ----------------------------------------------------------
+  // ---- placement: tap anywhere on the photo -----------------------------
+  // The tap point is resolved against the OCR boxes: first a generous
+  // containment test, else the nearest box center within MAX_DIST. Boxes are
+  // visual overlays (pointer-events: none); only pips stay clickable.
   const imgwrap = document.getElementById("imgwrap");
+  const PAD = 0.04;     // expand each bbox by 4% of image size on all sides
+  const MAX_DIST = 0.25; // normalized distance fallback
+
+  function normPoint(clientX, clientY) {
+    const img = imgwrap.querySelector("img");
+    const r = img.getBoundingClientRect();
+    return [(clientX - r.left) / r.width, (clientY - r.top) / r.height];
+  }
+
+  function resolveItem(clientX, clientY) {
+    const [px, py] = normPoint(clientX, clientY);
+    let nearest = null, nearestD = Infinity;
+    for (const el of imgwrap.querySelectorAll(".box")) {
+      const x = parseFloat(el.style.left) / 100, y = parseFloat(el.style.top) / 100;
+      const w = parseFloat(el.style.width) / 100, h = parseFloat(el.style.height) / 100;
+      if (px >= x - PAD && px <= x + w + PAD && py >= y - PAD && py <= y + h + PAD) {
+        return { id: el.dataset.item, el };  // inside (generous) bbox: immediate match
+      }
+      const d = Math.hypot(px - (x + w / 2), py - (y + h / 2));
+      if (d < nearestD) [nearest, nearestD] = [{ id: el.dataset.item, el }, d];
+    }
+    return nearestD <= MAX_DIST ? nearest : null;
+  }
+
   imgwrap.addEventListener("click", (e) => {
     const pip = e.target.closest(".pip");
     if (pip) { // remove existing token
       send({ op: "unplace", item_id: pip.closest(".box").dataset.item, username: pip.dataset.user });
       return;
     }
-    const box = e.target.closest(".box");
-    if (!box || !selected || !who) return;
-    send({ op: "place", item_id: box.dataset.item, username: selected });
+    if (!selected || !who) return;
+    const target = resolveItem(e.clientX, e.clientY);
+    if (!target) {
+      flashNoMatch(e);
+      return;
+    }
+    // immediate local echo: drop marker at the tap point + box highlight
+    dropMarker(e.clientX, e.clientY, selected);
+    target.el.classList.add("hit");
+    setTimeout(() => target.el.classList.remove("hit"), 500);
+    send({ op: "place", item_id: target.id, username: selected });
   });
+
+  const noMatch = document.createElement("div");
+  noMatch.className = "no-match";
+  noMatch.textContent = "no item here — add it below";
+  function flashNoMatch(e) {
+    const [nx, ny] = normPoint(e.clientX, e.clientY);
+    noMatch.style.left = `${nx * 100}%`;
+    noMatch.style.top = `${ny * 100}%`;
+    imgwrap.append(noMatch);
+    noMatch.classList.remove("show");
+    void noMatch.offsetWidth;
+    noMatch.classList.add("show");
+  }
+
+  function dropMarker(clientX, clientY, username) {
+    const img = imgwrap.querySelector("img");
+    const r = img.getBoundingClientRect();
+    const m = document.createElement("span");
+    m.className = "pip drop-marker";
+    m.style.position = "absolute";
+    m.style.left = `${clientX - r.left - 8}px`;
+    m.style.top = `${clientY - r.top - 8}px`;
+    m.style.setProperty("--c", colors[username] || "#888");
+    imgwrap.append(m);
+    m.addEventListener("animationend", () => m.remove());
+  }
 
   function send(op) {
     if (!who) return location = `/claim?next=${encodeURIComponent(location.pathname)}`;

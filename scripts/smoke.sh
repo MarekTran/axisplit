@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 B=http://127.0.0.1:8777
 rm -f data/axisplit.db /tmp/adam.jar /tmp/nina.jar
 nohup uv run uvicorn axisplit.main:app --port 8777 > /tmp/axisplit.log 2>&1 &
@@ -14,9 +14,20 @@ TAB=$(grep -oP '/t/\K[a-zA-Z0-9_-]+' /tmp/tab.html | head -1)
 SECRET=$(grep -oP '\?s=\K[a-zA-Z0-9_-]+' /tmp/tab.html | head -1)
 echo "tab=$TAB secret=$SECRET"
 
-uv run python -c "from PIL import Image; Image.new('RGB',(400,600),'#efe9dd').save('/tmp/receipt.jpg')"
+uv run python - <<'EOF'
+from PIL import Image
+im = Image.new("RGB", (400, 600), "#efe9dd")
+ex = im.getexif(); ex[274] = 6  # EXIF orientation: 90° CW — phones do this constantly
+im.save("/tmp/receipt.jpg", exif=ex.tobytes())
+EOF
 curl -s -b /tmp/adam.jar -o /tmp/r.html -L -F "image=@/tmp/receipt.jpg;type=image/jpeg" $B/t/$TAB/receipts
 RID=$(grep -oP 'data-receipt="\K[^"]+' /tmp/r.html); echo "receipt=$RID"
+uv run python -c "
+from PIL import Image
+im = Image.open('data/uploads/$RID.jpg')
+assert im.size == (600, 400), f'EXIF not baked: {im.size}'
+assert im.getexif().get(274) is None, 'orientation tag still present'
+print('EXIF normalization ok (pixels == rendered == bbox space)')"
 
 curl -s -b /tmp/adam.jar -o /dev/null -d "label=GrillFor2&price=20,00" $B/r/$RID/items
 curl -s -b /tmp/adam.jar -o /dev/null -d "label=Nachos&price=5" $B/r/$RID/items

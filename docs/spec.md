@@ -94,9 +94,16 @@ Pipeline contract in code: `axisplit.ocr.extract_items(path) -> list[ExtractedIt
 Prototype ships with a `StubBackend` (empty/placeholder items, manual entry UI)
 so the app is fully usable before OCR is decided.
 
-UI tolerance: boxes may be loose; users can re-assign item labels/prices
-inline (htmx edit rows), and a token can be dragged onto *any* box, so OCR
-recall matters more than pixel-perfect IoU.
+UI tolerance: boxes may be loose — **users tap anywhere on the photo where they
+see an item**, and the tap resolves against OCR geometry client-side: first a
+generous containment test (bbox expanded by 4% of image size), else the nearest
+box center within 25% of image size; no match → "add this item" hint. A token
+can always be re-assigned, so OCR recall matters more than pixel-perfect IoU.
+
+Coordinate-space guarantee: `Item.bbox` is normalized 0..1 against the **stored,
+EXIF-transposed** file. Uploads run `normalize_pixels()` (Pillow
+`exif_transpose` baked into the file), so raw pixels == rendered pixels ==
+whatever space OCR models see. Backends MUST return boxes in that space.
 
 ## 6. Auth & threat model (v1)
 
@@ -115,8 +122,10 @@ recall matters more than pixel-perfect IoU.
 - **Frontend:** htmx + Alpine.js (CDN), one small hand-written `receipt.js`
   for the token board + WebSocket. Mobile-first CSS. No React, no bundler
   in v1.
-- **Interaction:** tap-to-select-token → tap-to-place on box (touch-first);
-  mouse hover effects on desktop. True DnD deliberately avoided on touch.
+- **Interaction:** tap a member token, then **tap the photo** where the item is
+  printed; client-side geometry snaps the token to the containing/nearest OCR
+  box (spec §5). Tap a pip to remove. True DnD deliberately avoided on touch —
+  tap-tap also works one-handed on a phone at a restaurant table.
 - **Inference:** models served behind LiteLLM proxy (OpenAI-compatible) or
   run locally from the bench harness.
 - **Dev env:** Nix flake (python, uv, postgres, git) + direnv.
