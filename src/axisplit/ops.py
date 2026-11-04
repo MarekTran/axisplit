@@ -96,11 +96,16 @@ async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -
     raise HTTPException(422, f"unknown op {kind!r}")
 
 
-async def add_item(session: AsyncSession, receipt: Receipt, label: str, price_cents: int) -> Item:
+async def add_item(session: AsyncSession, receipt: Receipt, label: str, price_cents: int,
+                   bbox: tuple[float, float, float, float] | None = None) -> Item:
     count = len(await get_receipt_items(session, receipt.id))
+    if bbox is None:
+        bbox = (0.03, min(0.9, 0.05 + count * 0.12), 0.9, 0.1)
+    x, y, w, h = bbox
     item = Item(
         id=new_id(), receipt_id=receipt.id, label=label, price_cents=price_cents,
-        x=0.03, y=min(0.9, 0.05 + count * 0.12), w=0.9, h=0.1,
+        x=max(0.0, min(x, 0.95)), y=max(0.0, min(y, 0.95)),
+        w=max(0.05, min(w, 1.0 - x)), h=max(0.03, min(h, 1.0 - y)),
     )
     session.add(item)
     await session.commit()

@@ -63,7 +63,7 @@
     if (!selected || !who) return;
     const target = resolveItem(e.clientX, e.clientY);
     if (!target) {
-      flashNoMatch(e);
+      openQuickAdd(...normPoint(e.clientX, e.clientY));
       return;
     }
     // immediate local echo: drop marker at the tap point + box highlight
@@ -75,7 +75,7 @@
 
   const noMatch = document.createElement("div");
   noMatch.className = "no-match";
-  noMatch.textContent = "no items yet — add the receipt lines below";
+  noMatch.textContent = "no items yet — tap where a line is printed to add it";
   function flashNoMatch(e) {
     const [nx, ny] = normPoint(e.clientX, e.clientY);
     noMatch.style.left = `${nx * 100}%`;
@@ -84,6 +84,34 @@
     noMatch.classList.remove("show");
     void noMatch.offsetWidth;
     noMatch.classList.add("show");
+  }
+
+  // Tap-to-add: while the receipt has no items (stub OCR / OCR missed the
+  // whole photo), a tap opens a mini form at the tap point; the created box
+  // is centered on that point so subsequent token taps snap to it correctly.
+  function openQuickAdd(nx, ny) {
+    let qa = document.getElementById("quickadd");
+    if (qa) qa.remove();
+    qa = document.createElement("form");
+    qa.id = "quickadd";
+    qa.method = "post";
+    qa.action = `/r/${rid}/items`;
+    qa.innerHTML = `
+      <input name="label" placeholder="line as printed" required maxlength="120" autofocus>
+      <div class="qa-row">
+        <input name="price" placeholder="price" required inputmode="decimal">
+        <input type="hidden" name="x" value="${nx.toFixed(4)}">
+        <input type="hidden" name="y" value="${ny.toFixed(4)}">
+        <button type="submit">Add</button>
+        <button type="button" class="qa-cancel">✕</button>
+      </div>`;
+    qa.style.left = `${Math.min(nx, 0.55) * 100}%`;
+    qa.style.top = `${Math.min(ny, 0.8) * 100}%`;
+    qa.querySelector(".qa-cancel").addEventListener("click", () => qa.remove());
+    qa.addEventListener("click", (e) => e.stopPropagation());
+    qa.addEventListener("submit", (e) => e.stopPropagation());
+    imgwrap.append(qa);
+    qa.querySelector("input[name=label]").focus();
   }
 
   function dropMarker(clientX, clientY, username) {

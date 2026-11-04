@@ -60,7 +60,11 @@ def seed():
     rid = r.url.path.split("/")[-1]
     for label, price in [("GrillFor2", "20,00"), ("Nachos", "5"), ("Beer x2", "2")]:
         c.post(f"/r/{rid}/items", data={"label": label, "price": price})
-    return rid, c.cookies.get("who"), n.cookies.get("who")
+    # second receipt WITHOUT items -> exercises tap-to-add
+    with open(img, "rb") as f:
+        r = c.post(f"/t/{tab}/receipts", files={"image": ("check2.jpg", f, "image/jpeg")})
+    rid_empty = r.url.path.split("/")[-1]
+    return rid, rid_empty, c.cookies.get("who"), n.cookies.get("who")
 
 
 def open_page(cookie):
@@ -88,7 +92,7 @@ def main() -> int:
                 break
             except Exception:
                 time.sleep(0.25)
-        rid, adam_ck, nina_ck = seed()
+        rid, rid_empty, adam_ck, nina_ck = seed()
 
         d1 = open_page(adam_ck); drivers.append(d1)
         d1.get(f"{B}/r/{rid}")
@@ -129,6 +133,23 @@ def main() -> int:
         d1.get(f"{B}/r/{rid}")  # fresh load: server-rendered end state
         d1.save_screenshot(str(SHOTS / "board.png"))
         print(f"screenshot: {SHOTS / 'board.png'}")
+
+        # 4. tap-to-add on an empty receipt: tap where a line is printed ->
+        #    mini form -> submit -> box centered on the tap point exists
+        d1.get(f"{B}/r/{rid_empty}")
+        wait_for(lambda: len(d1.find_elements("css selector", ".box")) == 0, "empty receipt")
+        rect = d1.execute_script("const r=document.querySelector('#imgwrap img').getBoundingClientRect();"
+                                 "return [r.x, r.y, r.width, r.height];")
+        tap(d1, rect[0] + rect[2] * 0.4, rect[1] + rect[3] * 0.6)
+        wait_for(lambda: d1.find_elements("css selector", "#quickadd"), "quick-add form")
+        d1.find_element("css selector", "#quickadd input[name=label]").send_keys("Mala Chili mix")
+        d1.find_element("css selector", "#quickadd input[name=price]").send_keys("1,00")
+        d1.find_element("css selector", "#quickadd button[type=submit]").click()
+        wait_for(lambda: len(d1.find_elements("css selector", ".box")) == 1, "box after tap-to-add")
+        box = d1.execute_script("const b=document.querySelector('.box').getBoundingClientRect();"
+                                "const i=document.querySelector('#imgwrap img').getBoundingClientRect();"
+                                "return [((b.x+b.width/2)-i.x)/i.width, ((b.y+b.height/2)-i.y)/i.height];")
+        print(f"tap-to-add: OK (box center at ~{box[0]:.2f},{box[1]:.2f} of image, tapped 0.40,0.60)")
         return 0
     finally:
         for d in drivers:

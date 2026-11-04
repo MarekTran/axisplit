@@ -89,6 +89,7 @@ async def receipt_page(receipt_id: str, request: Request, session: AsyncSession 
 
 @router.post("/r/{receipt_id}/items")
 async def create_item(receipt_id: str, label: str = Form(...), price: str = Form(...),
+                      x: float | None = Form(None), y: float | None = Form(None),
                       request: Request = None, session: AsyncSession = Depends(get_session)):
     receipt = await session.get(Receipt, receipt_id)
     if receipt is None:
@@ -98,7 +99,10 @@ async def create_item(receipt_id: str, label: str = Form(...), price: str = Form
         cents = round(float(price.replace(",", ".")) * 100)
     except ValueError:
         raise HTTPException(422, "bad price")
-    await add_item(session, receipt, label.strip()[:120], cents)
+    bbox = None
+    if x is not None and y is not None:  # tap-to-add: center a line box on the tap point
+        bbox = (x - 0.30, y - 0.035, 0.60, 0.07)
+    await add_item(session, receipt, label.strip()[:120], cents, bbox=bbox)
     return RedirectResponse(f"/r/{receipt_id}", 303)
 
 
