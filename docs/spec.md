@@ -96,8 +96,9 @@ so the app is fully usable before OCR is decided.
 
 UI tolerance: boxes may be loose — **users tap anywhere on the photo where they
 see an item**, and the tap resolves against OCR geometry client-side: first a
-generous containment test (bbox expanded by 4% of image size), else the nearest
-box center within 25% of image size; no match → "add this item" hint. A token
+generous containment test (bbox expanded by 4% of image size), else **always
+the nearest box center, at any distance** (a tap is never wasted when items
+exist); the toast only appears when the receipt has no items at all. A token
 can always be re-assigned, so OCR recall matters more than pixel-perfect IoU.
 
 Coordinate-space guarantee: `Item.bbox` is normalized 0..1 against the **stored,

@@ -25,12 +25,11 @@
   paint();
 
   // ---- placement: tap anywhere on the photo -----------------------------
-  // The tap point is resolved against the OCR boxes: first a generous
-  // containment test, else the nearest box center within MAX_DIST. Boxes are
-  // visual overlays (pointer-events: none); only pips stay clickable.
+  // Token snaps to the closest item: generous containment first (bbox
+  // expanded 4%), else the nearest box center at any distance. Toast only
+  // when the receipt has no items at all.
   const imgwrap = document.getElementById("imgwrap");
-  const PAD = 0.04;     // expand each bbox by 4% of image size on all sides
-  const MAX_DIST = 0.25; // normalized distance fallback
+  const PAD = 0.04; // expand each bbox by 4% of image size on all sides
 
   function normPoint(clientX, clientY) {
     const img = imgwrap.querySelector("img");
@@ -39,9 +38,11 @@
   }
 
   function resolveItem(clientX, clientY) {
+    const boxes = imgwrap.querySelectorAll(".box");
+    if (!boxes.length) return null;
     const [px, py] = normPoint(clientX, clientY);
     let nearest = null, nearestD = Infinity;
-    for (const el of imgwrap.querySelectorAll(".box")) {
+    for (const el of boxes) {
       const x = parseFloat(el.style.left) / 100, y = parseFloat(el.style.top) / 100;
       const w = parseFloat(el.style.width) / 100, h = parseFloat(el.style.height) / 100;
       if (px >= x - PAD && px <= x + w + PAD && py >= y - PAD && py <= y + h + PAD) {
@@ -50,7 +51,7 @@
       const d = Math.hypot(px - (x + w / 2), py - (y + h / 2));
       if (d < nearestD) [nearest, nearestD] = [{ id: el.dataset.item, el }, d];
     }
-    return nearestD <= MAX_DIST ? nearest : null;
+    return nearest;  // else just the closest item, however far
   }
 
   imgwrap.addEventListener("click", (e) => {
@@ -74,7 +75,7 @@
 
   const noMatch = document.createElement("div");
   noMatch.className = "no-match";
-  noMatch.textContent = "no item here — add it below";
+  noMatch.textContent = "no items yet — add the receipt lines below";
   function flashNoMatch(e) {
     const [nx, ny] = normPoint(e.clientX, e.clientY);
     noMatch.style.left = `${nx * 100}%`;

@@ -14,3 +14,4 @@ bench/cases/*/*.jpg
 bench/cases/*/*.png
 bench/cases/*/*.webp
 bench/preds/
+data/shots/
