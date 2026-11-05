@@ -97,3 +97,6 @@ uv run python -m bench.score --gt bench/cases --preds bench/preds/stub
 
 Put real receipt photos + `gt.json` in `bench/cases/<id>/` (photos are
 gitignored). See `bench/README.md` for candidate models and env vars.
+
+Results so far, and why the app uses PaddleOCR plus a decision model:
+[`docs/benchmarks.md`](docs/benchmarks.md).
