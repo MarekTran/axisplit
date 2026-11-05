@@ -1,0 +1,15 @@
+{
+  "image": "../../../test_photos/ctUi2Puk.jpg",
+  "currency": "EUR",
+  "items": [
+    {"label": "Coffee", "price_cents": 300, "bbox": [0.225, 0.444, 0.709, 0.463]},
+    {"label": "Agua de Jamaica", "price_cents": 800, "bbox": [0.225, 0.455, 0.709, 0.473]},
+    {"label": "Nachos", "price_cents": 1050, "bbox": [0.224, 0.465, 0.709, 0.484]},
+    {"label": "Bowl Birria (Beef)", "price_cents": 1500, "bbox": [0.224, 0.475, 0.709, 0.494]},
+    {"label": "Cheese", "price_cents": 150, "bbox": [0.24, 0.486, 0.708, 0.504]},
+    {"label": "Mix Salad", "price_cents": 850, "bbox": [0.223, 0.496, 0.707, 0.515]},
+    {"label": "Tacos al Pastor (Pork)", "price_cents": 1350, "bbox": [0.223, 0.505, 0.707, 0.526]},
+    {"label": "Tacos Pescado (Fish)", "price_cents": 1450, "bbox": [0.222, 0.515, 0.706, 0.536]}
+  ],
+  "total": {"label": "Totaal", "price_cents": 7450, "bbox": [0.221, 0.525, 0.704, 0.549]}
+}

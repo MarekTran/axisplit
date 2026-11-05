@@ -1,0 +1,12 @@
+{
+  "image": "../../../test_photos/u78-VYhI.jpg",
+  "currency": "EUR",
+  "items": [
+    {"label": "AYCE DO - ZO", "price_cents": 12450, "bbox": [0.234, 0.324, 0.717, 0.365]},
+    {"label": "Mala Chili mix", "price_cents": 100, "bbox": [0.234, 0.38, 0.722, 0.399]},
+    {"label": "Homemade Mango Tea", "price_cents": 695, "bbox": [0.234, 0.412, 0.728, 0.431]},
+    {"label": "Homemade Watermelon Tea", "price_cents": 695, "bbox": [0.234, 0.431, 0.732, 0.457]},
+    {"label": "Espresso Martini", "price_cents": 1450, "bbox": [0.234, 0.477, 0.737, 0.498]}
+  ],
+  "total": {"label": "TOTAL", "price_cents": 15390, "bbox": [0.236, 0.574, 0.747, 0.594]}
+}

@@ -1,0 +1,14 @@
+{
+  "image": "../../../test_photos/RhRwCpua.jpg",
+  "currency": "EUR",
+  "items": [
+    {"label": "ribez vino", "price_cents": 3240, "bbox": [0.2335, 0.3662, 0.7059, 0.3999]},
+    {"label": "skinny b.", "price_cents": 1520, "bbox": [0.2335, 0.3975, 0.7038, 0.4268]},
+    {"label": "limonada", "price_cents": 350, "bbox": [0.2335, 0.4243, 0.7038, 0.4526]},
+    {"label": "Hor.čokol.šl.", "price_cents": 320, "bbox": [0.2335, 0.4502, 0.7049, 0.4829]},
+    {"label": "Borovička Sp.", "price_cents": 240, "bbox": [0.2335, 0.4805, 0.7049, 0.5127]},
+    {"label": "special 0,5l", "price_cents": 300, "bbox": [0.2335, 0.5103, 0.7049, 0.543]},
+    {"label": "pivo velke", "price_cents": 210, "bbox": [0.2335, 0.5405, 0.7059, 0.5747]}
+  ],
+  "total": {"label": "Celkom", "price_cents": 6180, "bbox": [0.2335, 0.5864, 0.7049, 0.606]}
+}

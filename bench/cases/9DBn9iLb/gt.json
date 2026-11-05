@@ -1,0 +1,16 @@
+{
+  "image": "../../../test_photos/9DBn9iLb.jpg",
+  "currency": "CZK",
+  "items": [
+    {"label": "turecká vejce", "price_cents": 19000, "bbox": [0.15, 0.375, 0.832, 0.4]},
+    {"label": "malinová limo", "price_cents": 8500, "bbox": [0.155, 0.3989, 0.8121, 0.4229]},
+    {"label": "ledové latte", "price_cents": 8500, "bbox": [0.1571, 0.4263, 0.8121, 0.4482]},
+    {"label": "kombucha", "price_cents": 7500, "bbox": [0.1582, 0.4541, 0.8121, 0.4736]},
+    {"label": "extra shot.", "price_cents": 1000, "bbox": [0.1603, 0.4805, 0.8121, 0.4985]},
+    {"label": "omeletka", "price_cents": 39000, "bbox": [0.1624, 0.5073, 0.8132, 0.5234]},
+    {"label": "affogato.", "price_cents": 9500, "bbox": [0.1635, 0.5342, 0.8142, 0.5498]},
+    {"label": "vanilka", "price_cents": 0, "bbox": [0.1943, 0.5605, 0.8153, 0.5742]},
+    {"label": "chleba se sýrem a vejcem/pomazánkou", "price_cents": 10500, "bbox": [0.1624, 0.5859, 0.8174, 0.6128]}
+  ],
+  "total": {"label": "Celkem", "price_cents": 103500, "bbox": [0.1614, 0.6597, 0.8174, 0.6821]}
+}

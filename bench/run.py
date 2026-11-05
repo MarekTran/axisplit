@@ -32,6 +32,9 @@ with total price), exclude subtotal/tax/total/tip lines."""
 
 
 def find_image(case: Path) -> Path:
+    named = case / json.loads((case / "gt.json").read_text()).get("image", "")
+    if named.is_file():  # e.g. ../../../test_photos/<id>.jpg, committed with the repo
+        return named
     for ext in ("jpg", "jpeg", "png", "webp"):
         hits = sorted(case.glob(f"*.{ext}"))
         if hits:
