@@ -2,21 +2,26 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{% block title %}axisplit{% endblock %}</title>
-  <meta name="theme-color" content="#186450">
-  <link rel="stylesheet" href="/static/style.css?v=3">
-  <script src="/static/ui.js?v=3" defer></script>
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f5f6f4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e1311" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="/static/style.css?v=5">
+  <script src="/static/ui.js?v=4" defer></script>
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <script src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body>
-  <header>
-    <a class="brand" href="/"><span class="brand-icon" aria-hidden="true">a/</span>axisplit</a>
-    <span class="who">{% if who %}<span class="avatar" aria-hidden="true">{{ who[:1] }}</span>{{ who }}{% else %}<a href="/claim?next={{ request.url.path }}">Choose your name</a>{% endif %}</span>
+  <header class="site-header">
+    <a class="brand" href="/">
+      <svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8"/><path d="M18 7.5 10 20.5"/><circle cx="9.5" cy="10" r="2.3"/><circle cx="18.5" cy="18" r="2.3"/></svg>
+      axisplit
+    </a>
+    {% if who %}<span class="who"><span class="avatar" aria-hidden="true">{{ who[:1] }}</span>{{ who }}</span>
+    {% elif request.url.path != "/claim" %}<a class="btn secondary small" href="/claim?next={{ request.url.path }}">Choose your name</a>{% endif %}
   </header>
   <main class="{% block main_class %}{% endblock %}">{% block content %}{% endblock %}</main>
-  <footer class="site-footer">axisplit · A fair share starts with a shared receipt.</footer>
 </body>
 </html>

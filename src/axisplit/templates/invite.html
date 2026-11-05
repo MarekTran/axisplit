@@ -1,10 +1,12 @@
 {% extends "base.html" %}
+{% block main_class %}narrow{% endblock %}
 {% block content %}
-<h1>Join “{{ tab.name }}”</h1>
-<p class="muted">This link is missing its invite secret. Someone in the tab can paste
-the full share link (with <code>?s=…</code>) into your group chat.</p>
-<form method="get" action="/t/{{ tab.id }}">
-  <input name="s" placeholder="invite secret" required>
-  <button>Join</button>
-</form>
+<section class="panel">
+  <h1>Join “{{ tab.name }}”</h1>
+  <p class="muted">This link is missing its invite secret. Ask someone in the tab for the full link (it ends in <code>?s=…</code>).</p>
+  <form method="get" action="/t/{{ tab.id }}" class="stack">
+    <label>Invite secret<input name="s" placeholder="Paste the secret from the link" required autocomplete="off"></label>
+    <button class="large">Join tab</button>
+  </form>
+</section>
 {% endblock %}

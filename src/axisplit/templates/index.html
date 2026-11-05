@@ -1,14 +1,17 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block main_class %}narrow{% endblock %}
 {% block content %}
-<h1>axisplit</h1>
-<p class="muted">Splitwise/Tricount for group receipts — snap a photo, OCR the items,
-drop a colored token on each item for whoever had it.</p>
-{% if who %}
-<form method="post" action="/tabs" class="row">
-  <input name="name" placeholder="New tab name (e.g. Brno dinner)" required maxlength="64">
-  <button>Create tab</button>
-</form>
-{% else %}
-<p><a class="btn" href="/claim?next=/">Pick a username to start</a></p>
-{% endif %}
+<section class="panel">
+  <h1>Start a tab</h1>
+  <p class="muted">Add receipt photos, then everyone taps what they had.</p>
+  {% if who %}
+  <form method="post" action="/tabs" class="stack">
+    <label>Tab name<input id="tab-name" name="name" placeholder="e.g. Brno dinner" required maxlength="64" autocomplete="off"></label>
+    <button class="large">{{ icon("plus") }}Create tab</button>
+  </form>
+  {% else %}
+  <a class="btn large" href="/claim?next=/">Choose your name to start</a>
+  {% endif %}
+</section>
 {% endblock %}

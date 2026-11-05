@@ -1,50 +1,46 @@
-<section id="review" class="review-panel panel" data-status="{{ receipt.status }}" data-status-label="{{ receipt.status | status_label }}" aria-label="Review this split">
-  <div class="section-heading"><div><p class="eyebrow">REVIEW & AGREE</p><h2>Who had what?</h2></div><strong class="amount">{{ summary.total | eur }}</strong></div>
-  <div class="assignment-progress">
-    <div><strong>{{ summary.assigned_count }} / {{ summary.item_count }} items assigned</strong><span>{{ summary.unassigned_total | eur }} left</span></div>
-    <progress value="{{ summary.assigned_count }}" max="{{ summary.item_count or 1 }}" aria-label="Items assigned"></progress>
-  </div>
-  <p class="muted">Each item is shared equally among its selected people. Check the detected prices against the photo.</p>
+{% from "_icons.html" import icon %}
+<section id="review" class="review-panel" data-status="{{ receipt.status }}" data-status-label="{{ receipt.status | status_label }}" aria-label="Items and shares">
+  <div class="review-head"><h2>Items</h2><span class="muted">{{ summary.assigned_count }}/{{ summary.item_count }} assigned{% if summary.unassigned_count %} · {{ summary.unassigned_total | eur }} left{% endif %}</span></div>
+  <progress value="{{ summary.assigned_count }}" max="{{ summary.item_count or 1 }}" aria-label="Items assigned"></progress>
 
   <ol class="item-review">
   {% for item in items %}
-    {% set holders = item.tokens | map(attribute='username') | list %}
-    <li data-item="{{ item.id }}">
-      <div class="item-heading"><button class="item-jump" type="button" data-jump="{{ item.id }}" aria-label="Find {{ item.label }} on the photo">{{ loop.index }}</button><strong>{{ item.label }}</strong><span class="amount">{{ item.price_cents | eur }}</span></div>
-      <div class="person-toggles" role="group" aria-label="People sharing {{ item.label }}">
-      {% for m in members %}
-        <button type="button" class="person-toggle" data-item="{{ item.id }}" data-user="{{ m.username }}" style="--c: {{ m.color }}"
-                aria-pressed="{{ 'true' if m.username in holders else 'false' }}" aria-label="{{ m.username }} shares {{ item.label }}">
-          <span class="dot"></span>{{ m.username }}<span class="check" aria-hidden="true">✓</span>
-        </button>
-      {% endfor %}
+    <li data-item="{{ item.id }}" class="{{ 'assigned' if item.tokens else 'unassigned' }}">
+      <button class="item-jump" type="button" data-jump="{{ item.id }}" aria-label="Find {{ item.label }} on the photo">{{ loop.index }}</button>
+      <button class="item-add" type="button" data-add="{{ item.id }}"><strong>{{ item.label }}</strong><span class="amount">{{ item.price_cents | eur }}</span></button>
+      <div class="holders">
+      {% for t in item.tokens %}
+        <button type="button" class="holder" data-item="{{ item.id }}" data-user="{{ t.username }}" style="--c: {{ colors.get(t.username, '#888') }}"
+                aria-label="Remove {{ t.username }} from {{ item.label }}"><span class="avatar" aria-hidden="true">{{ t.username[:1] }}</span>{{ t.username }}</button>
+      {% else %}<small class="unassigned-label">Nobody yet</small>{% endfor %}
       </div>
-      {% if not holders %}<small class="unassigned-label">Choose who had this item</small>{% else %}<small class="muted">Shared by {{ holders | length }} · {{ holders | join(', ') }}</small>{% endif %}
     </li>
   {% else %}<li class="muted">Detect the receipt to see its items here.</li>{% endfor %}
   </ol>
 
-  <h3>Shares & confirmations</h3>
-  <ul class="share-list confirmations">
+  {% if items %}
+  <div class="review-head"><h2>Shares</h2><strong class="amount total">{{ summary.total | eur }}</strong></div>
+  <ul class="share-list confirmations panel">
   {% for m in members %}
-    <li><div><span class="dot" style="--c: {{ m.color }}"></span>{{ m.username }}{% if m.username == who %}<small> · you</small>{% endif %}
-      <small class="confirmation-state">{% if m.username in summary.confirmed %}✓ Agreed{% elif m.username in summary.totals %}Not confirmed yet{% else %}No items assigned{% endif %}</small></div>
-      <strong>{{ summary.totals.get(m.username, 0) | eur }}</strong></li>
+    <li style="--c: {{ m.color }}"><div class="person"><span class="avatar" aria-hidden="true">{{ m.username[:1] }}</span><div>{{ m.username }}{% if m.username == who %}<small class="you-tag">you</small>{% endif %}
+      <small class="confirmation-state {{ 'agreed' if m.username in summary.confirmed else '' }}">{% if m.username in summary.confirmed %}✓ Agreed{% elif m.username in summary.totals %}Not confirmed yet{% else %}No items{% endif %}</small></div></div>
+      <strong class="amount">{{ summary.totals.get(m.username, 0) | eur }}</strong></li>
   {% endfor %}
   </ul>
   <div class="confirmation-action">
   {% if who in summary.confirmed %}
     <p class="notice success compact">✓ You agreed to your {{ summary.totals.get(who, 0) | eur }} share.</p>
-    <button id="confirm-btn" type="button" class="secondary" data-confirm="unconfirm">Withdraw my confirmation</button>
+    <button id="confirm-btn" type="button" class="secondary large" data-confirm="unconfirm">Withdraw my confirmation</button>
   {% else %}
-    <button id="confirm-btn" type="button" data-confirm="confirm" {% if not summary.complete or who not in summary.totals %}disabled{% endif %}>Confirm my {{ summary.totals.get(who, 0) | eur }} share</button>
+    <button id="confirm-btn" type="button" class="large" data-confirm="confirm" {% if not summary.complete or who not in summary.totals %}disabled{% endif %}>{{ icon("check") }}Confirm my {{ summary.totals.get(who, 0) | eur }} share</button>
   {% endif %}
   <p class="muted" id="confirmed">
     {% if not summary.complete %}Assign every item before confirming.
     {% elif not summary.waiting %}Everyone with assigned items has agreed. This does not record a payment.
     {% elif who not in summary.totals %}You don’t have a share to confirm. Waiting for {{ summary.waiting | join(', ') }}.
     {% else %}Still waiting for {{ summary.waiting | join(', ') }}.{% endif %}
+    Any change resets confirmations.
   </p>
-  <small class="muted">Changing any item’s people or adding an item resets confirmations so everyone can check the new split.</small>
   </div>
+  {% endif %}
 </section>
