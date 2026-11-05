@@ -101,7 +101,8 @@ Benchmarked on 38 privately labelled receipts (rules tuned on 19, frozen, the
 other 19 scored once). On the unseen 19, with a focus area: 219 of 244 prices
 right and 1 extra item; totals right on 17 of 19 (rules alone 11; Qwen3-VL-4B
 reading the photo 18, at ~8 s each). About a second per upload: two OCR passes on
-an 8-core CPU, then 0.1 s on the GPU for the total.
+an 8-core CPU, then 0.1 s on the GPU for the total. All results:
+[`docs/benchmarks.md`](benchmarks.md).
 
 **Vision backend** (`AXISPLIT_OCR_BACKEND=vision`): Qwen3-VL-4B via a local
 llama.cpp server (Nix-packaged Vulkan backend), JSON-schema-constrained
@@ -186,6 +187,7 @@ whatever space OCR models see. Backends MUST return boxes in that space.
 
 ```
 docs/spec.md        this file
+docs/benchmarks.md  OCR benchmark results
 bench/              OCR benchmark harness + ground-truth format
 src/axisplit/       FastAPI app (SSR)
   ocr.py            local vision inference + validated grounding boxes
