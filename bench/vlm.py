@@ -50,6 +50,9 @@ MODELS = {
 }
 # Same server flags as the app's axisplit-ocr (flake.nix), so results match what the app gets.
 APP_ARGS = ["--ctx-size", "8192", "--parallel", "1", "--n-gpu-layers", "99", "--image-min-tokens", "1024"]
+# Plus no RAM prompt cache: it defaults to 8 GB, never hits (every photo differs) and only grows.
+# Doesn't change answers. Qwen3-VL-4B reached 8.4 GB of RAM without this.
+NO_CACHE = ["--cache-ram", "0"]
 
 
 class Backend(ocr.LocalVisionBackend):
@@ -69,8 +72,12 @@ class Backend(ocr.LocalVisionBackend):
         return super()._ask(im, prompt, schema)
 
 
+ONLY: set[str] | None = None  # case ids to use (--split FILE:KEY); None = all
+
+
 def cases():
-    return sorted(p for p in CASES.iterdir() if (p / "gt.json").exists() and "total" in json.loads((p / "gt.json").read_text()))
+    return sorted(p for p in CASES.iterdir() if (p / "gt.json").exists() and "total" in json.loads((p / "gt.json").read_text())
+                  and (ONLY is None or p.name in ONLY))
 
 
 def focus_from_gt(gt, margin=0.01):
@@ -83,7 +90,7 @@ def focus_from_gt(gt, margin=0.01):
 
 def serve(name, llama, port, device, log, max_ram_gb):
     spec = MODELS[name]
-    cmd = [llama, "-hf", spec["hf"], "--host", "127.0.0.1", "--port", str(port), *APP_ARGS,
+    cmd = [llama, "-hf", spec["hf"], "--host", "127.0.0.1", "--port", str(port), *APP_ARGS, *NO_CACHE,
            "--device", device, *spec.get("args", [])]
     if max_ram_gb:  # a model that outgrows this is killed alone instead of the whole desktop
         cmd = ["systemd-run", "--user", "--scope", "--quiet", "-p", f"MemoryMax={max_ram_gb}G",
@@ -208,14 +215,35 @@ def centre_in(bbox, quad):
     return all(s >= 0 for s in signs) or all(s <= 0 for s in signs)
 
 
+def pred_centre_in(pred, quad):
+    """A prediction with its own quad (OCR pipelines) is judged by that quad's centre."""
+    if "quad" in pred:
+        cx = sum(x for x, _ in pred["quad"]) / 4
+        cy = sum(y for _, y in pred["quad"]) / 4
+        return centre_in([cx, cy, cx, cy], quad)
+    return centre_in(pred["bbox"], quad)
+
+
+def pred_iou(pred, quad):
+    if "quad" in pred:
+        a, b = [tuple(p) for p in pred["quad"]], [tuple(p) for p in quad]
+        inter = clip(a, b)
+        i = area(inter) if len(inter) >= 3 else 0.0
+        u = area(a) + area(b) - i
+        return i / u if u > 0 else 0.0
+    return quad_iou(pred["bbox"], quad)
+
+
 def match(gt_items, pred):
+    """By name (fuzzy), or, when the names differ (OCR noise, terse labels), by the same price
+    with the prediction's centre inside the item's quad."""
     pairs = []
     for g, gi in enumerate(gt_items):
         for p, pi in enumerate(pred):
             sim = label_sim(gi["label"], pi["label"])
-            if sim >= 0.6:
-                pairs.append((sim + 0.25 * (pi["price_cents"] == gi["price_cents"])
-                              + 0.25 * centre_in(pi["bbox"], gi["quad"]), g, p))
+            same_price, on_line = pi["price_cents"] == gi["price_cents"], pred_centre_in(pi, gi["quad"])
+            if sim >= 0.6 or (same_price and on_line):
+                pairs.append((max(sim, 0.5) + 0.25 * same_price + 0.25 * on_line, g, p))
     used_g, used_p, out = set(), set(), []
     for _, g, p in sorted(pairs, reverse=True):
         if g not in used_g and p not in used_p:
@@ -254,8 +282,8 @@ def score(args):
                 pairs = match(gt["items"], pred)
                 n_gt += len(gt["items"]); n_pred += len(pred); found += len(pairs)
                 price_ok += sum(p["price_cents"] == g["price_cents"] for g, p in pairs)
-                on_line += sum(centre_in(p["bbox"], g["quad"]) for g, p in pairs)
-                ious += [quad_iou(p["bbox"], g["quad"]) for g, p in pairs]
+                on_line += sum(pred_centre_in(p, g["quad"]) for g, p in pairs)
+                ious += [pred_iou(p, g["quad"]) for g, p in pairs]
                 sums_ok += sum(p["price_cents"] for p in pred) == sum(g["price_cents"] for g in gt["items"])
                 totals_ok += pr["total"]["total_cents"] == gt["total"]["price_cents"]
             if not n_cases:
@@ -292,7 +320,16 @@ def main():
                    help="re-run only some calls; results merge into existing prediction files")
     s = sub.add_parser("score")
     s.add_argument("--json", action="store_true")
+    for sp in (r, s):
+        sp.add_argument("--cases", type=Path, help="cases dir (default bench/cases)")
+        sp.add_argument("--preds", type=Path, help="predictions dir (default bench/preds/vlm)")
+        sp.add_argument("--split", help="FILE:KEY, e.g. split.json:heldout, to use only those case ids")
     args = ap.parse_args()
+    global CASES, PREDS, ONLY
+    CASES, PREDS = args.cases or CASES, args.preds or PREDS
+    if args.split:
+        path, key = args.split.rsplit(":", 1)
+        ONLY = set(json.loads(Path(path).read_text())[key])
     run(args) if args.cmd == "run" else score(args)
     return 0
 
