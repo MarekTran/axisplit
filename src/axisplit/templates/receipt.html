@@ -1,57 +1,74 @@
 {% extends "base.html" %}
-{% block title %}{{ receipt.title }} — {{ tab.name }}{% endblock %}
+{% block title %}Split receipt — {{ tab.name }}{% endblock %}
+{% block main_class %}wide{% endblock %}
 {% block content %}
-<div id="board"
-     data-receipt="{{ receipt.id }}"
-     data-who="{{ who }}"
-     data-members='{{ members | map(attribute="username") | list | tojson }}'
+<div id="board" data-receipt="{{ receipt.id }}" data-tab="{{ tab.id }}" data-who="{{ who }}"
      data-colors='{{ colors | tojson }}'>
-  <h1><a href="/t/{{ tab.id }}" class="crumb">{{ tab.name }}</a> / {{ receipt.title }}</h1>
-  <p><span class="badge" id="status">{{ receipt.status }}</span>
-     <span class="muted" id="presence"></span></p>
-
-  {% if not who %}
-  <p><a class="btn" href="/claim?next=/r/{{ receipt.id }}">claim your name to place tokens</a></p>
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/t/{{ tab.id }}">← {{ tab.name }}</a><span>/</span><span>Split receipt</span></nav>
+  <div class="page-heading">
+    <div><p class="eyebrow">RECEIPT · {{ receipt.created_at | receipt_date }}</p><h1>Let’s split this fairly.</h1><p class="muted">Added by {{ receipt.uploaded_by }} · {{ items | length }} detected items</p></div>
+    <span class="badge {{ receipt.status }}" id="status">{{ receipt.status | status_label }}</span>
+  </div>
+  {% if request.query_params.get('duplicate') %}
+  <div class="notice warning" role="status"><div><strong>This photo is already in the tab.</strong><br>We opened the existing receipt instead of charging everyone twice.</div></div>
   {% endif %}
 
-  <div class="tokenbar" id="tokenbar" aria-label="tokens">
+  {% if not items %}
+  <section class="notice warning" role="status"><div>
+    {% if request.query_params.get('ocr') == 'failed' %}
+      <strong>We couldn’t read the receipt.</strong><p>Start <code>axisplit-ocr</code> in another dev-shell terminal, wait for the model to load, then retry. Details are in the app log.</p>
+    {% elif request.query_params.get('ocr') == 'empty' %}
+      <strong>No readable items found.</strong><p>Try a clearer photo, or retry detection.</p>
+    {% else %}
+      <strong>This receipt needs detection.</strong><p>Start the local vision server, then detect its items.</p>
+    {% endif %}
+    <form method="post" action="/r/{{ receipt.id }}/detect" data-busy="Finding items…"><button>Detect items automatically</button><p class="busy-help" hidden>Reading the receipt. Please wait.</p></form>
+  </div></section>
+  {% endif %}
+  {% if not who %}<p><a class="btn" href="/claim?next=/r/{{ receipt.id }}">Choose your name to join the split</a></p>{% endif %}
+
+  <div class="token-toolbar panel">
+    <div class="toolbar-heading"><strong id="selection-hint">Choose a person, then tap what they had.</strong><span id="presence" class="connection" role="status">Connecting…</span></div>
+    <div class="tokenbar" id="tokenbar" role="group" aria-label="Whose token to place">
     {% for m in members %}
-    <button class="token" data-user="{{ m.username }}" style="--c: {{ m.color }}"
-            title="tap token, then tap an item box">{{ m.username }}</button>
+      <button type="button" class="token" data-user="{{ m.username }}" style="--c: {{ m.color }}" aria-pressed="false">{{ m.username }}{% if m.username == who %}<small> · you</small>{% endif %}<span class="check" aria-hidden="true">✓</span></button>
     {% endfor %}
-  </div>
-
-  <div class="imgwrap" id="imgwrap">
-    <img src="/uploads/{{ receipt.image_path }}" alt="receipt photo">
-    {% for item in items %}
-    <div class="box" data-item="{{ item.id }}" style="left: {{ item.x * 100 }}%; top: {{ item.y * 100 }}%;
-         width: {{ item.w * 100 }}%; height: {{ item.h * 100 }}%"
-         title="tap to place selected token">
-      <span class="lbl">{{ item.label }} — {{ item.price_cents | eur }}</span>
-      <span class="tokens">
-        {% for t in item.tokens %}
-        <span class="pip" data-user="{{ t.username }}" style="--c: {{ (members | selectattr('username','equalto',t.username) | first).color or '#888' }}"
-              title="tap to remove {{ t.username }}'s token"></span>
-        {% endfor %}
-      </span>
-      {% if item.ocr_confidence is not none %}<span class="conf">ocr {{ '%.0f' | format(item.ocr_confidence * 100) }}%</span>{% endif %}
     </div>
-    {% endfor %}
+    <div class="toolbar-footer"><span class="muted">Tap the printed item to add the selected person. Tap a token to remove it.</span><a href="#review">Review shares ↓</a></div>
   </div>
-  <p class="muted hint">Tap a name token above, then <strong>tap the photo where the item is
-    printed</strong> — the token snaps into the matching OCR box (or the closest one).
-    Tap a pip inside a box to remove it. Add missing lines below.</p>
 
-  <form method="post" action="/r/{{ receipt.id }}/items" class="row">
-    <input name="label" placeholder="item label" required maxlength="120">
-    <input name="price" placeholder="price e.g. 12,50" required inputmode="decimal">
-    <button>Add item</button>
-  </form>
-
-  <div class="confirmbar">
-    <button id="confirm-btn" class="btn-primary">Confirm split</button>
-    <span id="confirmed" class="muted"></span>
+  <div class="receipt-workspace">
+    <div class="photo-column">
+      <div class="imgwrap" id="imgwrap" aria-label="Receipt photo with detected items">
+        <img src="/uploads/{{ receipt.image_path }}" alt="Receipt photograph. Numbered boxes correspond to the item list." draggable="false">
+        {% for item in items %}
+        <div class="box {{ 'assigned' if item.tokens else '' }}" data-item="{{ item.id }}"
+             style="left: {{ item.x * 100 }}%; top: {{ item.y * 100 }}%; width: {{ item.w * 100 }}%; height: {{ item.h * 100 }}%">
+          <span class="box-number">{{ loop.index }}</span>
+          <span class="lbl">{{ item.label }} — {{ item.price_cents | eur }}</span>
+          <span class="tokens">
+          {% for t in item.tokens %}
+            <button type="button" class="pip" data-user="{{ t.username }}" style="--c: {{ colors.get(t.username, '#888') }}"
+                    aria-label="Remove {{ t.username }} from {{ item.label }}" title="Remove {{ t.username }}"><span>{{ t.username[:1] }}</span></button>
+          {% endfor %}
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="photo-caption muted">Amber boxes still need people. Green boxes are assigned. Use the item list for larger controls or keyboard access.</p>
+      <details class="panel manual-entry"><summary>OCR missed an item?</summary>
+        <p class="muted">Add only missing lines. Verify prices against the original receipt.</p>
+        <form method="post" action="/r/{{ receipt.id }}/items" class="row">
+          <label class="grow">Item name<input name="label" placeholder="As printed on the receipt" required maxlength="120"></label>
+          <label>Line total (€)<input name="price" placeholder="12,50" required inputmode="decimal"></label>
+          <button>Add missing item</button>
+        </form>
+      </details>
+    </div>
+    {% include "review.html" %}
   </div>
 </div>
-<script src="/static/receipt.js" defer></script>
+<div id="board-feedback" class="feedback-toast" role="status" aria-live="polite" hidden><span></span><button type="button" id="undo-token" hidden>Undo</button></div>
+<script src="/static/hit-test.js?v=3" defer></script>
+<script src="/static/receipt.js?v=3" defer></script>
 {% endblock %}

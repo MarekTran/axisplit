@@ -20,9 +20,9 @@ async def recompute_status(session: AsyncSession, receipt: Receipt) -> str:
         status = ReceiptStatus.AWAITING_ITEMS
     elif not has_tokens:
         status = ReceiptStatus.AWAITING_TOKENS
-    elif involved and involved <= confirmed:
+    elif all(i.tokens for i in items) and involved and involved <= confirmed:
         status = ReceiptStatus.SETTLED
-    elif confirmed:
+    elif confirmed and all(i.tokens for i in items):
         status = ReceiptStatus.PENDING_CONFIRM
     else:
         status = ReceiptStatus.SPLITTING
@@ -53,6 +53,8 @@ async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -
     receipt = await session.get(Receipt, receipt_id)
     if receipt is None or receipt.tab_id != tab.id:
         raise HTTPException(404, "receipt not found")
+    if receipt.status == ReceiptStatus.REMOVED:
+        raise HTTPException(410, "This receipt was removed. Restore it from the tab to edit it.")
 
     if kind in ("place", "unplace"):
         item_id, target = op.get("item_id"), op.get("username")
@@ -79,6 +81,11 @@ async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -
         return {"type": kind, "item_id": item_id, "username": target, "status": status}
 
     if kind == "confirm":
+        items = await get_receipt_items(session, receipt_id)
+        if not items or any(not i.tokens for i in items):
+            raise HTTPException(409, "Assign every item before confirming the split.")
+        if actor not in involved_users(items):
+            raise HTTPException(409, "You have no assigned items to confirm yet.")
         if await session.get(Confirmation, (receipt_id, actor)) is None:
             session.add(Confirmation(receipt_id=receipt_id, username=actor))
             await session.commit()
@@ -108,6 +115,10 @@ async def add_item(session: AsyncSession, receipt: Receipt, label: str, price_ce
         w=max(0.05, min(w, 1.0 - x)), h=max(0.03, min(h, 1.0 - y)),
     )
     session.add(item)
+    for confirmation in await session.scalars(
+        select(Confirmation).where(Confirmation.receipt_id == receipt.id)
+    ):
+        await session.delete(confirmation)
     await session.commit()
     await recompute_status(session, receipt)
     return item

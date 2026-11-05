@@ -4,16 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}axisplit{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <meta name="theme-color" content="#186450">
+  <link rel="stylesheet" href="/static/style.css?v=3">
+  <script src="/static/ui.js?v=3" defer></script>
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <script src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body>
   <header>
-    <a class="brand" href="/">axisplit</a>
-    <span class="who">{% if who %}{{ who }}{% else %}<a href="/claim?next={{ request.url.path }}">claim name</a>{% endif %}</span>
+    <a class="brand" href="/"><span class="brand-icon" aria-hidden="true">a/</span>axisplit</a>
+    <span class="who">{% if who %}<span class="avatar" aria-hidden="true">{{ who[:1] }}</span>{{ who }}{% else %}<a href="/claim?next={{ request.url.path }}">Choose your name</a>{% endif %}</span>
   </header>
-  <main>{% block content %}{% endblock %}</main>
+  <main class="{% block main_class %}{% endblock %}">{% block content %}{% endblock %}</main>
+  <footer class="site-footer">axisplit · A fair share starts with a shared receipt.</footer>
 </body>
 </html>

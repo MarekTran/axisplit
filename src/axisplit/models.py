@@ -41,6 +41,7 @@ class ReceiptStatus(str, enum.Enum):
     SPLITTING = "splitting"                # tokens placed, not all confirmed
     PENDING_CONFIRM = "pending_confirm"    # someone confirmed
     SETTLED = "settled"                    # all involved confirmed
+    REMOVED = "removed"                    # reversible removal; assignments retained
 
 
 class Receipt(Base):

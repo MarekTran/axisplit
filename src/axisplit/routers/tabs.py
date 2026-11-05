@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
@@ -6,10 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import new_id
 from ..db import get_session
 from ..deps import ensure_membership, get_tab_or_404, get_who, require_member, require_who
-from ..models import Receipt, Tab, TabMember
+from ..images import duplicate_receipts
+from ..models import Confirmation, Receipt, ReceiptStatus, Tab, TabMember
 from ..ops import get_receipt_items
-from ..split import split_item
 from ..templ import templates
+from ..viewmodels import receipt_summary
 
 router = APIRouter(tags=["tabs"])
 
@@ -47,23 +50,32 @@ async def tab_page(
             return templates.TemplateResponse(request, "invite.html", {"tab": tab, "secret": s or ""}, status_code=403)
         member = await ensure_membership(session, tab_id, who)
     members = list(await session.scalars(select(TabMember).where(TabMember.tab_id == tab_id)))
-    receipts = list(await session.scalars(select(Receipt).where(Receipt.tab_id == tab_id).order_by(Receipt.created_at.desc())))
+    receipts = list(await session.scalars(
+        select(Receipt).where(Receipt.tab_id == tab_id, Receipt.status != ReceiptStatus.REMOVED)
+        .order_by(Receipt.created_at.desc())
+    ))
+    duplicates = await asyncio.to_thread(duplicate_receipts, receipts)
     rows = []
-    total_cents = 0
-    for r in receipts:
-        items = await get_receipt_items(session, r.id)
-        receipt_total = sum(i.price_cents for i in items)
-        total_cents += receipt_total
-        rows.append({"receipt": r, "lines": items, "total": receipt_total})
-    # ledger
-    ledger = {}
-    for row in rows:
-        for item in row["lines"]:
-            for share in split_item(item):
-                ledger.setdefault(share.username, []).append(share)
+    totals = {m.username: 0 for m in members}
+    for receipt in receipts:
+        items = await get_receipt_items(session, receipt.id)
+        confirmed = set(await session.scalars(
+            select(Confirmation.username).where(Confirmation.receipt_id == receipt.id)
+        ))
+        summary = receipt_summary(items, confirmed)
+        for username, cents in summary["totals"].items():
+            totals[username] = totals.get(username, 0) + cents
+        rows.append({"receipt": receipt, "summary": summary,
+                     "duplicate_of": duplicates.get(receipt.id)})
+    removed = await session.get(Receipt, request.query_params.get("removed", ""))
+    if removed is not None and (removed.tab_id != tab_id or removed.status != ReceiptStatus.REMOVED):
+        removed = None
     return templates.TemplateResponse(request, "tab.html", {
-        "tab": tab, "who": who, "members": members, "rows": rows,
-        "total_cents": total_cents, "ledger": ledger,
+        "tab": tab, "who": who, "members": members, "rows": rows, "totals": totals,
+        "total_cents": sum(row["summary"]["total"] for row in rows),
+        "assigned_cents": sum(row["summary"]["assigned"] for row in rows),
+        "unassigned_cents": sum(row["summary"]["unassigned_total"] for row in rows),
+        "duplicate_count": len(duplicates), "removed": removed,
     })
 
 
