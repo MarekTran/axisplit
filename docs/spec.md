@@ -26,6 +26,12 @@ Confirmation    (receipt, username, confirmed_at) — user agrees with final
                 token layout & prices of a receipt.
 ```
 
+Removed receipts keep their data but are excluded from tab totals. Removal
+requires explicit confirmation; Undo restores their assignments and agreement
+state. Exact-photo duplicates reuse an existing active receipt. Existing copies
+are flagged for review, never silently discarded. See `docs/ux.md`.
+
+
 Settlement is **pure derived data**: for each item, each token holder owes
 `price / n_holders` (remainder cents distributed deterministically by
 holder-sort order). Debts between users are minimized optionally (greedy
@@ -38,7 +44,7 @@ UPLOADED  → OCR_RUNNING → AWAITING_ITEMS   (items need manual fix, UI editab
                         → AWAITING_TOKENS  (items OK, no assignments yet)
 AWAITING_TOKENS → SPLITTING (someone placing tokens)
 SPLITTING       → PENDING_CONFIRM (a member clicked Confirm)
-PENDING_CONFIRM → SETTLED (all *participants listed on the receipt* confirmed)
+PENDING_CONFIRM → SETTLED (all items assigned and all token holders confirmed)
                           → anyone moving a token bumps it back to SPLITTING
 ```
 
@@ -81,7 +87,12 @@ PENDING_CONFIRM → SETTLED (all *participants listed on the receipt* confirmed)
 
 Goal: from one crumpled receipt photo → `[{label, price_cents, currency, bbox}]`.
 
-**Decision pending benchmark** (see `/bench`):
+**Current prototype:** Qwen3-VL-4B via a local llama.cpp server (Nix-packaged
+Vulkan backend), JSON-schema-constrained item/price/box extraction. Automatic
+on upload, retryable on empty receipts. Verified on one real receipt, not yet
+benchmarked for accuracy across the full dataset.
+
+**Candidates for further benchmarking** (see `/bench`):
 - Primary candidates: `dots.ocr` (native bbox+category+text JSON, MIT),
   `Qwen3-VL-8B` (grounding-capable general VLM, easy via LiteLLM/llama.cpp),
   `DeepSeek-OCR-2` (Apache-2.0, strong structure reading),
@@ -91,14 +102,18 @@ Goal: from one crumpled receipt photo → `[{label, price_cents, currency, bbox}
 - Classical-only (Tesseract) is ruled out for crumpled thermal paper.
 
 Pipeline contract in code: `axisplit.ocr.extract_items(path) -> list[ExtractedItem]`.
-Prototype ships with a `StubBackend` (empty/placeholder items, manual entry UI)
-so the app is fully usable before OCR is decided.
+The default is `LocalVisionBackend` at `http://127.0.0.1:8081/v1`.
+`StubBackend` is only enabled explicitly with `AXISPLIT_OCR_BACKEND=stub` for
+UI tests. Inference errors are logged and shown as detection failures, never
+silently replaced by fake boxes. Qwen boxes in 0..1000 convert to normalized
+0..1 after validating coordinate order and bounds.
 
 UI tolerance: boxes may be loose — **users tap anywhere on the photo where they
-see an item**, and the tap resolves against OCR geometry client-side: first a
-generous containment test (bbox expanded by 4% of image size), else **always
-the nearest box center, at any distance** (a tap is never wasted when items
-exist); the toast only appears when the receipt has no items at all. A token
+see an item**, and the tap resolves against OCR geometry client-side: actual
+box containment first, then 12 rendered pixels of hit slop, then nearest box
+at any distance. Overlapping candidates are ranked by distance to the box
+edge, then its center; padded boxes never steal hits inside another actual
+box. An empty receipt offers detection or manual recovery. A token
 can always be re-assigned, so OCR recall matters more than pixel-perfect IoU.
 
 Coordinate-space guarantee: `Item.bbox` is normalized 0..1 against the **stored,
@@ -118,7 +133,7 @@ whatever space OCR models see. Backends MUST return boxes in that space.
 
 ## 7. Stack
 
-- **Backend:** Python 3.13, FastAPI, SQLAlchemy 2 (async), Postgres in prod /
+- **Backend:** Python 3.12, FastAPI, SQLAlchemy 2 (async), Postgres in prod /
   SQLite in dev (`DATABASE_URL`). Jinja2 SSR.
 - **Frontend:** htmx + Alpine.js (CDN), one small hand-written `receipt.js`
   for the token board + WebSocket. Mobile-first CSS. No React, no bundler
@@ -137,7 +152,7 @@ whatever space OCR models see. Backends MUST return boxes in that space.
 docs/spec.md        this file
 bench/              OCR benchmark harness + ground-truth format
 src/axisplit/       FastAPI app (SSR)
-  ocr.py            extraction contract + stub backend
+  ocr.py            local vision inference + validated grounding boxes
   models.py db.py   SQLAlchemy domain
   routers/          tabs, receipts, ws
   templates/ static/

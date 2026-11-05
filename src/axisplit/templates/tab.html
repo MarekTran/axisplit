@@ -1,53 +1,96 @@
 {% extends "base.html" %}
 {% block title %}{{ tab.name }} — axisplit{% endblock %}
 {% block content %}
-<h1>{{ tab.name }}</h1>
-<p class="share"><input readonly value="{{ request.base_url }}t/{{ tab.id }}?s={{ tab.invite_secret }}"
-   onclick="this.select()" placeholder="share link"></p>
+<nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">Home</a><span>/</span><span>Your group</span></nav>
+<div class="page-heading">
+  <div><p class="eyebrow">SHARED TAB</p><h1>{{ tab.name }}</h1><p class="muted">One receipt. Everyone’s fair share.</p></div>
+  <a href="#upload" class="btn">+ Add a receipt</a>
+</div>
 
-<h2>Members</h2>
-<ul class="chips">
-  {% for m in members %}
-    <li><span class="dot" style="--c: {{ m.color }}"></span>{{ m.username }}{% if m.username == who %} <em>(you)</em>{% endif %}</li>
-  {% endfor %}
-</ul>
-<form method="post" action="/t/{{ tab.id }}/members" class="row">
-  <input name="username" placeholder="add member by username" required maxlength="32">
-  <button>Add</button>
-</form>
-
-<h2>Receipts</h2>
-<form method="post" action="/t/{{ tab.id }}/receipts" enctype="multipart/form-data">
-  <input type="file" name="image" accept="image/jpeg,image/png,image/webp" required>
-  <button>Upload receipt</button>
-</form>
-<ul class="receipts">
-  {% for row in rows %}
-  <li>
-    <a href="/r/{{ row.receipt.id }}">{{ row.receipt.title }}</a>
-    <span class="badge">{{ row.receipt.status }}</span>
-    <span class="muted">{{ row.total | eur }} · {{ row.lines | length }} items</span>
-  </li>
-  {% else %}
-  <li class="muted">no receipts yet — upload a photo of a check</li>
-  {% endfor %}
-</ul>
-
-<h2>Ledger</h2>
-{% if ledger %}
-<table>
-  <tr><th>who</th><th>owes / gets back</th></tr>
-  {% for user, shares in ledger.items() %}
-  <tr>
-    <td>{{ user }}</td>
-    <td>{{ shares | map(attribute='cents') | sum | eur }}
-        <span class="muted">({{ shares | length }} item shares)</span></td>
-  </tr>
-  {% endfor %}
-</table>
-<p class="muted">Total {{ total_cents | eur }} across {{ rows | length }} receipts.
-Items with no tokens are not split yet.</p>
-{% else %}
-<p class="muted">Nothing split yet.</p>
+{% if removed %}
+<div class="notice success" role="status">
+  <div><strong>Receipt removed from this tab.</strong><br>Your assignments are kept in case this was a mistake.</div>
+  <form method="post" action="/r/{{ removed.id }}/restore"><button class="secondary">Undo removal</button></form>
+</div>
+{% elif request.query_params.get('restored') %}
+<div class="notice success" role="status">Receipt restored, including its assignments and confirmations.</div>
 {% endif %}
+{% if duplicate_count %}
+<div class="notice warning" role="status"><div><strong>The same photo appears more than once.</strong><br>
+  Both copies currently count toward the receipt total. Compare them below and keep the one with the right assignments.</div></div>
+{% endif %}
+
+<div class="metrics">
+  <div class="metric"><span>Receipt totals</span><strong>{{ total_cents | eur }}</strong><small>{{ rows | length }} active receipt{{ '' if rows | length == 1 else 's' }}</small></div>
+  <div class="metric"><span>Assigned to people</span><strong>{{ assigned_cents | eur }}</strong><small>Split item by item</small></div>
+  <div class="metric {{ 'attention' if unassigned_cents else '' }}"><span>Still to assign</span><strong>{{ unassigned_cents | eur }}</strong><small>{{ 'Open a receipt to finish' if unassigned_cents else 'All detected costs are assigned' }}</small></div>
+</div>
+
+<section class="panel">
+  <div class="section-heading"><div><h2>People in this tab</h2><p class="muted">Anyone here can place tokens for anyone else.</p></div></div>
+  <ul class="chips">
+    {% for m in members %}<li><span class="dot" style="--c: {{ m.color }}"></span>{{ m.username }}{% if m.username == who %}<span class="muted"> · you</span>{% endif %}</li>{% endfor %}
+  </ul>
+  <div class="group-tools">
+    <form method="post" action="/t/{{ tab.id }}/members" class="row">
+      <label class="grow">Add someone by username<input name="username" placeholder="e.g. Nina" required maxlength="32" autocomplete="off"></label>
+      <button class="secondary">Add person</button>
+    </form>
+    <div class="share-control">
+      <label for="share-link">Invite your group</label>
+      <div class="row"><input id="share-link" readonly value="{{ request.base_url }}t/{{ tab.id }}?s={{ tab.invite_secret }}" aria-label="Group invitation link">
+        <button type="button" class="secondary" data-copy="share-link">Copy link</button></div>
+      <small class="muted">Anyone with this link can join. Share it with people you trust.</small>
+    </div>
+  </div>
+</section>
+
+<section id="receipts">
+  <div class="section-heading"><div><h2>Receipts</h2><p class="muted">Assign the items, then everyone checks their share.</p></div></div>
+  <div class="receipt-cards">
+  {% for row in rows %}
+    {% set r = row.receipt %}{% set s = row.summary %}
+    <article class="receipt-card {{ 'duplicate-card' if row.duplicate_of else '' }}">
+      <a href="/r/{{ r.id }}" class="receipt-preview" aria-label="Open receipt from {{ r.created_at | receipt_date }}"><img src="/uploads/{{ r.image_path }}" alt="Receipt preview" loading="lazy"></a>
+      <div class="receipt-card-body">
+        <div class="card-heading"><h3><a href="/r/{{ r.id }}">Receipt · {{ r.created_at | receipt_date }}</a></h3><strong class="amount">{{ s.total | eur }}</strong></div>
+        <p class="muted">Added by {{ r.uploaded_by }} · {{ s.item_count }} detected item{{ '' if s.item_count == 1 else 's' }}</p>
+        <span class="badge {{ r.status }}">{{ r.status | status_label }}</span>
+        <p class="card-progress">{% if not s.item_count %}Detect the items to get started.{% elif not s.complete %}{{ s.assigned_count }} of {{ s.item_count }} items assigned · {{ s.unassigned_total | eur }} left{% elif s.waiting %}Waiting for {{ s.waiting | join(', ') }} to agree.{% else %}All assigned people have confirmed.{% endif %}</p>
+        {% if row.duplicate_of %}<p class="duplicate-hint"><strong>Same photo as another receipt</strong><br>{{ 'This copy has assignments—check before removing it.' if s.assigned_count else 'This copy has no assignments yet.' }} <a href="/r/{{ row.duplicate_of }}">Compare the other copy</a></p>{% endif %}
+        <div class="card-actions"><a href="/r/{{ r.id }}" class="btn secondary">{{ 'Review split' if s.complete else 'Split this receipt' }}</a>
+          <button type="button" class="text-button danger-text" data-dialog="remove-{{ r.id }}">Remove</button></div>
+      </div>
+      <dialog id="remove-{{ r.id }}" aria-labelledby="remove-title-{{ r.id }}">
+        <h2 id="remove-title-{{ r.id }}">Remove this receipt?</h2>
+        <p>This removes <strong>{{ s.total | eur }}</strong> from the tab total. {% if s.assigned_count %}This copy has <strong>{{ s.assigned_count }} assigned items</strong> and {{ s.confirmed | length }} confirmation{{ '' if s.confirmed | length == 1 else 's' }}.{% else %}This copy has no assignments.{% endif %}</p>
+        <p>Its items, assignments and confirmations will be kept so you can undo.</p>
+        <div class="dialog-actions"><button type="button" class="secondary" data-close-dialog autofocus>Keep receipt</button>
+          <form method="post" action="/r/{{ r.id }}/remove"><button class="danger">Remove receipt</button></form></div>
+      </dialog>
+    </article>
+  {% else %}
+    <div class="empty-state"><h3>Your first receipt starts here</h3><p>Take a photo or choose one below. We’ll detect its items automatically.</p></div>
+  {% endfor %}
+  </div>
+</section>
+
+<section class="panel upload-panel" id="upload">
+  <div><p class="eyebrow">ADD A RECEIPT</p><h2>Photo → items → fair shares</h2><p class="muted">JPG, PNG or WebP, up to 12 MB. A clear photo works best.</p></div>
+  <form method="post" action="/t/{{ tab.id }}/receipts" enctype="multipart/form-data" data-busy="Reading your receipt…" class="upload-form">
+    <label for="receipt-image">Choose a receipt photo<input id="receipt-image" type="file" name="image" accept="image/jpeg,image/png,image/webp" required></label>
+    <button>Upload & detect items</button>
+    <p class="muted busy-help" hidden role="status">Reading the photo and finding items. This usually takes a few seconds; please don’t upload it again.</p>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="section-heading"><div><h2>Everyone’s share</h2><p class="muted">What each person consumed—not a payment or transfer balance. Shares can change until everyone agrees.</p></div></div>
+  <ul class="share-list">
+  {% for m in members %}
+    <li><span><span class="dot" style="--c: {{ m.color }}"></span>{{ m.username }}{% if m.username == who %}<small class="muted"> · you</small>{% endif %}</span><strong>{{ totals.get(m.username, 0) | eur }}</strong></li>
+  {% endfor %}
+  </ul>
+  {% if unassigned_cents %}<p class="notice warning compact">{{ unassigned_cents | eur }} is not included in people’s shares yet. Assign the remaining items.</p>{% endif %}
+</section>
 {% endblock %}

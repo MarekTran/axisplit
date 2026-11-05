@@ -1,192 +1,207 @@
-// Token board: tap-to-select token, tap box to place (touch-first, spec §7).
-// Live sync via WebSocket; HTTP fallback if WS unavailable. Ops are
-// add/remove on a set => idempotent, so applying our own echo is harmless.
+// SSR board: HTTP acknowledges edits; WebSocket broadcasts live peer changes.
+// The review fragment is authoritative for amounts, confirmations and assignments.
 (() => {
   const board = document.getElementById("board");
   if (!board) return;
   const rid = board.dataset.receipt;
   const who = board.dataset.who;
   const colors = JSON.parse(board.dataset.colors);
-
-  let selected = who && colors[who] ? who : null;
-  let ws = null;
-
-  // ---- tokenbar selection -------------------------------------------------
-  const tokenbar = document.getElementById("tokenbar");
-  const paint = () =>
-    tokenbar.querySelectorAll(".token").forEach(
-      (t) => t.classList.toggle("selected", t.dataset.user === selected));
-  tokenbar.addEventListener("click", (e) => {
-    const t = e.target.closest(".token");
-    if (!t) return;
-    selected = t.dataset.user === selected ? null : t.dataset.user;
-    paint();
-  });
-  paint();
-
-  // ---- placement: tap anywhere on the photo -----------------------------
-  // Token snaps to the closest item: generous containment first (bbox
-  // expanded 4%), else the nearest box center at any distance. Toast only
-  // when the receipt has no items at all.
   const imgwrap = document.getElementById("imgwrap");
-  const PAD = 0.04; // expand each bbox by 4% of image size on all sides
+  const tokenbar = document.getElementById("tokenbar");
+  let selected = colors[who] ? who : null;
+  let ws;
+  let closing = false;
+  let reviewTimer;
+  let feedbackTimer;
+  let undo;
+  const pending = new Set();
 
-  function normPoint(clientX, clientY) {
-    const img = imgwrap.querySelector("img");
-    const r = img.getBoundingClientRect();
-    return [(clientX - r.left) / r.width, (clientY - r.top) / r.height];
+  function feedback(message, undoAction = null) {
+    const toast = document.getElementById("board-feedback");
+    toast.querySelector("span").textContent = message;
+    toast.hidden = false;
+    undo = undoAction;
+    document.getElementById("undo-token").hidden = !undoAction;
+    clearTimeout(feedbackTimer);
+    feedbackTimer = setTimeout(() => { toast.hidden = true; undo = null; }, 8000);
   }
+  document.getElementById("undo-token").addEventListener("click", () => {
+    const action = undo;
+    undo = null;
+    if (action) send(action, false);
+  });
+
+  function paintSelection() {
+    for (const token of tokenbar.querySelectorAll(".token")) {
+      const active = token.dataset.user === selected;
+      token.classList.toggle("selected", active);
+      token.setAttribute("aria-pressed", String(active));
+    }
+    document.getElementById("selection-hint").textContent = selected
+      ? `Placing ${selected}’s token · tap what they had`
+      : "Choose a person, then tap what they had.";
+  }
+  tokenbar.addEventListener("click", (event) => {
+    const token = event.target.closest(".token");
+    if (!token) return;
+    selected = token.dataset.user; // Selection is a choice, not an on/off switch.
+    paintSelection();
+  });
+  paintSelection();
 
   function resolveItem(clientX, clientY) {
-    const boxes = imgwrap.querySelectorAll(".box");
-    if (!boxes.length) return null;
-    const [px, py] = normPoint(clientX, clientY);
-    let nearest = null, nearestD = Infinity;
-    for (const el of boxes) {
-      const x = parseFloat(el.style.left) / 100, y = parseFloat(el.style.top) / 100;
-      const w = parseFloat(el.style.width) / 100, h = parseFloat(el.style.height) / 100;
-      if (px >= x - PAD && px <= x + w + PAD && py >= y - PAD && py <= y + h + PAD) {
-        return { id: el.dataset.item, el };  // inside (generous) bbox: immediate match
-      }
-      const d = Math.hypot(px - (x + w / 2), py - (y + h / 2));
-      if (d < nearestD) [nearest, nearestD] = [{ id: el.dataset.item, el }, d];
-    }
-    return nearest;  // else just the closest item, however far
+    const image = imgwrap.querySelector("img").getBoundingClientRect();
+    const items = [...imgwrap.querySelectorAll(".box")].map((el) => ({
+      id: el.dataset.item, el,
+      x: parseFloat(el.style.left) / 100 * image.width,
+      y: parseFloat(el.style.top) / 100 * image.height,
+      w: parseFloat(el.style.width) / 100 * image.width,
+      h: parseFloat(el.style.height) / 100 * image.height,
+    }));
+    return closestReceiptItem(items, clientX - image.left, clientY - image.top);
   }
-
-  imgwrap.addEventListener("click", (e) => {
-    const pip = e.target.closest(".pip");
-    if (pip) { // remove existing token
+  function highlight(box) {
+    box.classList.add("hit");
+    setTimeout(() => box.classList.remove("hit"), 1500);
+  }
+  imgwrap.addEventListener("click", (event) => {
+    const pip = event.target.closest("button.pip");
+    if (pip) {
       send({ op: "unplace", item_id: pip.closest(".box").dataset.item, username: pip.dataset.user });
       return;
     }
-    if (!selected || !who) return;
-    const target = resolveItem(e.clientX, e.clientY);
-    if (!target) {
-      openQuickAdd(...normPoint(e.clientX, e.clientY));
-      return;
-    }
-    // immediate local echo: drop marker at the tap point + box highlight
-    dropMarker(e.clientX, e.clientY, selected);
-    target.el.classList.add("hit");
-    setTimeout(() => target.el.classList.remove("hit"), 500);
+    if (!who) { feedback("Choose your name before placing tokens."); return; }
+    if (!selected) { feedback("Choose a person above first."); return; }
+    const target = resolveItem(event.clientX, event.clientY);
+    if (!target) { feedback("Detect the receipt first, or add a missing item below."); return; }
+    highlight(target.el);
     send({ op: "place", item_id: target.id, username: selected });
   });
 
-  const noMatch = document.createElement("div");
-  noMatch.className = "no-match";
-  noMatch.textContent = "no items yet — tap where a line is printed to add it";
-  function flashNoMatch(e) {
-    const [nx, ny] = normPoint(e.clientX, e.clientY);
-    noMatch.style.left = `${nx * 100}%`;
-    noMatch.style.top = `${ny * 100}%`;
-    imgwrap.append(noMatch);
-    noMatch.classList.remove("show");
-    void noMatch.offsetWidth;
-    noMatch.classList.add("show");
-  }
+  // Delegation survives SSR review-fragment replacements.
+  board.addEventListener("click", (event) => {
+    const toggle = event.target.closest(".person-toggle");
+    if (toggle) send({
+      op: toggle.getAttribute("aria-pressed") === "true" ? "unplace" : "place",
+      item_id: toggle.dataset.item, username: toggle.dataset.user,
+    });
+    const confirm = event.target.closest("[data-confirm]");
+    if (confirm && !confirm.disabled) send({ op: confirm.dataset.confirm });
+    const jump = event.target.closest("[data-jump]");
+    if (jump) {
+      const box = imgwrap.querySelector(`.box[data-item="${jump.dataset.jump}"]`);
+      if (box) { box.scrollIntoView({ block: "center", behavior: "smooth" }); highlight(box); }
+    }
+  });
 
-  // Tap-to-add: while the receipt has no items (stub OCR / OCR missed the
-  // whole photo), a tap opens a mini form at the tap point; the created box
-  // is centered on that point so subsequent token taps snap to it correctly.
-  function openQuickAdd(nx, ny) {
-    let qa = document.getElementById("quickadd");
-    if (qa) qa.remove();
-    qa = document.createElement("form");
-    qa.id = "quickadd";
-    qa.method = "post";
-    qa.action = `/r/${rid}/items`;
-    qa.innerHTML = `
-      <input name="label" placeholder="line as printed" required maxlength="120" autofocus>
-      <div class="qa-row">
-        <input name="price" placeholder="price" required inputmode="decimal">
-        <input type="hidden" name="x" value="${nx.toFixed(4)}">
-        <input type="hidden" name="y" value="${ny.toFixed(4)}">
-        <button type="submit">Add</button>
-        <button type="button" class="qa-cancel">✕</button>
-      </div>`;
-    qa.style.left = `${Math.min(nx, 0.55) * 100}%`;
-    qa.style.top = `${Math.min(ny, 0.8) * 100}%`;
-    qa.querySelector(".qa-cancel").addEventListener("click", () => qa.remove());
-    qa.addEventListener("click", (e) => e.stopPropagation());
-    qa.addEventListener("submit", (e) => e.stopPropagation());
-    imgwrap.append(qa);
-    qa.querySelector("input[name=label]").focus();
+  function itemLabel(id) {
+    return board.querySelector(`.item-review li[data-item="${id}"] .item-heading > strong`)?.textContent || "item";
   }
-
-  function dropMarker(clientX, clientY, username) {
-    const img = imgwrap.querySelector("img");
-    const r = img.getBoundingClientRect();
-    const m = document.createElement("span");
-    m.className = "pip drop-marker";
-    m.style.position = "absolute";
-    m.style.left = `${clientX - r.left - 8}px`;
-    m.style.top = `${clientY - r.top - 8}px`;
-    m.style.setProperty("--c", colors[username] || "#888");
-    imgwrap.append(m);
-    m.addEventListener("animationend", () => m.remove());
-  }
-
-  function send(op) {
-    if (!who) return location = `/claim?next=${encodeURIComponent(location.pathname)}`;
-    const body = { ...op, actor: who };
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(body)); // reply comes back via broadcast
-    } else {
-      fetch(`/r/${rid}/ops`, {
+  async function send(op, allowUndo = true) {
+    if (!who) { location.href = `/claim?next=${encodeURIComponent(location.pathname)}`; return; }
+    const key = `${op.op}:${op.item_id || ""}:${op.username || ""}`;
+    if (pending.has(key)) return;
+    pending.add(key);
+    feedback("Saving…");
+    const label = itemLabel(op.item_id);
+    // Remember whether this is a true change (placing an existing token is a no-op).
+    const box = op.item_id && imgwrap.querySelector(`.box[data-item="${op.item_id}"]`);
+    const hadToken = box && [...box.querySelectorAll(".pip")].some(p => p.dataset.user === op.username);
+    try {
+      const response = await fetch(`/r/${rid}/ops`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      }).then((r) => r.json()).then((ev) => apply(ev, /*local*/ true));
-    }
-  }
-
-  document.getElementById("confirm-btn").addEventListener("click", () =>
-    send({ op: "confirm" }));
-
-  // ---- live apply ---------------------------------------------------------
-  function tokensOf(itemId) {
-    return [...document.querySelector(`.box[data-item="${itemId}"]`).querySelectorAll(".pip")]
-      .map((p) => p.dataset.user);
-  }
-  function apply(ev, optimistic) {
-    if (ev.type === "place" || ev.type === "unplace") {
-      const box = document.querySelector(`.box[data-item="${ev.item_id}"]`);
-      if (!box) return;
-      const holder = box.querySelector(".tokens");
-      const have = [...holder.querySelectorAll(".pip")];
-      const existing = have.find((p) => p.dataset.user === ev.username);
-      if (ev.type === "place") {
-        if (!existing) {
-          const pip = document.createElement("span");
-          pip.className = "pip flash";
-          pip.dataset.user = ev.username;
-          pip.style.setProperty("--c", colors[ev.username] || "#888");
-          holder.append(pip);
-        }
-      } else if (existing) {
-        existing.remove();
+        body: JSON.stringify({ ...op, actor: who }),
+      });
+      const event = await response.json();
+      if (!response.ok) throw new Error(event.detail || "Couldn’t save. Please try again.");
+      if (op.op === "place" || op.op === "unplace") {
+        const changed = op.op === "place" ? !hadToken : hadToken;
+        const inverse = allowUndo && changed ? { ...op, op: op.op === "place" ? "unplace" : "place" } : null;
+        feedback(`${op.username} ${op.op === "place" ? "added to" : "removed from"} ${label}. Saved.`, inverse);
+      } else {
+        feedback(op.op === "confirm" ? "Your confirmation is saved. Others can now check their shares." : "Your confirmation was withdrawn.");
       }
+      await refreshReview();
+    } catch (error) {
+      feedback(error.message || "Connection lost. Your change wasn’t confirmed; please retry.");
+    } finally {
+      pending.delete(key);
     }
-    if (ev.status) setStatus(ev.status);
-    if (ev.type === "presence") {
-      document.getElementById("presence").textContent = `${ev.online} online`;
-    }
-  }
-  function setStatus(s) {
-    const el = document.getElementById("status");
-    el.textContent = s;
-    document.getElementById("confirm-btn").textContent =
-      s === "settled" ? "Settled ✓" : "Confirm split";
   }
 
-  // ---- websocket ----------------------------------------------------------
+  // Fetch the authoritative state after edits and reconnects, including missed events.
+  let reviewVersion = 0;
+  async function refreshReview() {
+    const version = ++reviewVersion;
+    try {
+      const response = await fetch(`/r/${rid}/review`);
+      if (response.status === 410) { location.href = `/t/${board.dataset.tab}?removed=${rid}`; return; }
+      if (!response.ok) throw new Error("Couldn’t refresh shares. Reload to check the latest split.");
+      const html = await response.text();
+      if (version !== reviewVersion) return;
+      const next = new DOMParser().parseFromString(html, "text/html").getElementById("review");
+      // Preserve keyboard focus when a control is replaced by server-rendered HTML.
+      const active = document.activeElement;
+      const focus = active?.closest("#review") ? {
+        item: active.dataset.item, user: active.dataset.user, confirm: active.dataset.confirm,
+      } : null;
+      document.getElementById("review").replaceWith(next);
+      if (focus) {
+        const replacement = [...next.querySelectorAll("button")].find(button => focus.confirm
+          ? button.dataset.confirm : button.dataset.item === focus.item && button.dataset.user === focus.user);
+        replacement?.focus({ preventScroll: true });
+      }
+      const status = document.getElementById("status");
+      status.textContent = next.dataset.statusLabel;
+      status.className = `badge ${next.dataset.status}`;
+      syncBoxTokens();
+    } catch (error) { feedback(error.message); }
+  }
+  function syncBoxTokens() {
+    for (const box of imgwrap.querySelectorAll(".box")) {
+      const holders = [...board.querySelectorAll(`.person-toggle[data-item="${box.dataset.item}"]`)]
+        .filter(button => button.getAttribute("aria-pressed") === "true");
+      const tokens = box.querySelector(".tokens");
+      tokens.replaceChildren();
+      for (const holder of holders) {
+        const user = holder.dataset.user;
+        const pip = document.createElement("button");
+        pip.type = "button";
+        pip.className = "pip";
+        pip.dataset.user = user;
+        pip.style.setProperty("--c", colors[user] || "#888");
+        pip.textContent = user.slice(0, 1);
+        pip.setAttribute("aria-label", `Remove ${user} from ${itemLabel(box.dataset.item)}`);
+        pip.title = `Remove ${user}`;
+        tokens.append(pip);
+      }
+      box.classList.toggle("assigned", holders.length > 0);
+    }
+  }
+  function liveEvent(event) {
+    if (event.type === "presence") {
+      document.getElementById("presence").textContent = `Live · ${event.online} online`;
+    } else if (event.type === "removed") {
+      location.href = `/t/${board.dataset.tab}?removed=${rid}`;
+    } else if (event.type === "error") {
+      feedback(event.detail || "That change couldn’t be saved.");
+    } else {
+      clearTimeout(reviewTimer);
+      reviewTimer = setTimeout(refreshReview, 80);
+    }
+  }
   function connect() {
-    if (!who) return;
+    if (!who || closing) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/ws/receipts/${rid}?u=${encodeURIComponent(who)}`);
-    ws.onmessage = (e) => apply(JSON.parse(e.data));
-    ws.onclose = () => setTimeout(connect, 2000);
+    ws.onopen = () => { document.getElementById("presence").textContent = "Live updates connected"; refreshReview(); };
+    ws.onmessage = (event) => liveEvent(JSON.parse(event.data));
+    ws.onclose = () => {
+      document.getElementById("presence").textContent = "Live updates offline · edits still save";
+      if (!closing) setTimeout(connect, 2000);
+    };
     ws.onerror = () => ws.close();
   }
+  window.addEventListener("beforeunload", () => { closing = true; ws?.close(); });
   connect();
 })();
