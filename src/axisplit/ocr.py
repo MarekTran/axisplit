@@ -93,9 +93,12 @@ The grand total and other numbers on the receipt are outside it. Treat this
 cropped image as the whole image for bbox coordinates.
 """
 
+# No example amount: models copied it as the answer when a total was hard to read.
 TOTAL_PROMPT = """What is the grand total of this receipt: the final amount to pay, as printed
 (often labeled Total, Celkom, Celkem, Suma, Summe, or next to the currency)?
-Return JSON {"total_cents": 6180} in integer cents. Use null if no total is readable.
+Return JSON with "total_cents": the amount in integer cents (hundredths of the currency
+unit), so a printed 12,50 is 1250 and a printed 240 Kč without decimals is 24000.
+Use null if no total is readable.
 """
 
 
