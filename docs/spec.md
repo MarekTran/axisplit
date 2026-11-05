@@ -105,7 +105,21 @@ benchmarked for accuracy across the full dataset.
   item/price semantics.
 - Classical-only (Tesseract) is ruled out for crumpled thermal paper.
 
-Pipeline contract in code: `axisplit.ocr.extract_items(path) -> list[ExtractedItem]`.
+Pipeline contract in code: `axisplit.ocr.extract_items(path, focus=None) -> list[ExtractedItem]`
+and `axisplit.ocr.extract_total(path) -> int | None`.
+
+**Focus area.** After choosing a photo, the uploader drags over the item lines and
+their prices (or picks "Use whole photo"). The area is stored on the receipt and
+trusted as drawn: OCR receives only that crop, upscaled so its longer side is 1600 px,
+so the grand total and other numbers can't be read as items, and returned boxes are
+mapped back onto the whole photo. On the demo receipt with the local Qwen VLM this
+turned 2 wrong prices and drifting boxes (whole photo) into 7 correct prices with one
+box per line; one receipt, not a benchmark.
+
+**Total cross-check.** A second, independent OCR call reads the printed grand total
+from the whole photo. The review shows whether the items add up to it, or how much
+is missing or too much, so a missed line or misread price is visible. A failed
+total read never blocks the items.
 The default is `LocalVisionBackend` at `http://127.0.0.1:8081/v1`.
 `StubBackend` is only enabled explicitly with `AXISPLIT_OCR_BACKEND=stub` for
 UI tests. Inference errors are logged and shown as detection failures, never
@@ -117,7 +131,9 @@ see an item**, and the tap resolves against OCR geometry client-side: actual
 box containment first, then 12 rendered pixels of hit slop, then nearest box
 at any distance. Overlapping candidates are ranked by distance to the box
 edge, then its center; padded boxes never steal hits inside another actual
-box. An empty receipt offers detection or manual recovery. A token
+box. An empty receipt offers detection or manual recovery. A missing item is
+added by dragging its line on the photo; a wrong box is redrawn from the item's
+number (geometry only: shares and confirmations are unchanged). A token
 can always be re-assigned, so OCR recall matters more than pixel-perfect IoU.
 
 Coordinate-space guarantee: `Item.bbox` is normalized 0..1 against the **stored,

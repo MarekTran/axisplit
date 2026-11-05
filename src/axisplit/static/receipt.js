@@ -17,19 +17,23 @@
   let saving = 0; // Edits in flight. The review is refreshed once they have all settled.
   let queue = Promise.resolve();
 
-  function feedback(message, undoAction = null) {
+  // The toast's button undoes a token op, or runs another action (a function) under its own label.
+  function feedback(message, undoAction = null, label = "Undo") {
     const toast = document.getElementById("board-feedback");
     toast.querySelector("span").textContent = message;
     toast.hidden = false;
     undo = undoAction;
-    document.getElementById("undo-token").hidden = !undoAction;
+    const button = document.getElementById("undo-token");
+    button.hidden = !undoAction;
+    button.textContent = label;
     clearTimeout(feedbackTimer);
     feedbackTimer = setTimeout(() => { toast.hidden = true; undo = null; }, 8000);
   }
   document.getElementById("undo-token").addEventListener("click", () => {
     const action = undo;
     undo = null;
-    if (action) send(action, false);
+    if (typeof action === "function") action();
+    else if (action) send(action, false);
   });
 
   function paintSelection() {
@@ -72,6 +76,7 @@
     send({ op: "place", item_id: itemId, username: selected });
   }
   imgwrap.addEventListener("click", (event) => {
+    if (drawing || Date.now() - drewAt < 500) return;  // That press drew a box.
     const pip = event.target.closest("button.pip");
     if (pip) {
       send({ op: "unplace", item_id: pip.closest(".box").dataset.item, username: pip.dataset.user });
@@ -95,7 +100,12 @@
     const jump = event.target.closest("[data-jump]");
     if (jump) {
       const box = imgwrap.querySelector(`.box[data-item="${jump.dataset.jump}"]`);
-      if (box) { box.scrollIntoView({ block: "center", behavior: "smooth" }); highlight(box); }
+      if (box) {
+        box.scrollIntoView({ block: "center", behavior: "smooth" });
+        highlight(box);
+        const label = itemLabel(jump.dataset.jump);
+        feedback(`${label}: box in the wrong spot?`, () => startDrawing({ itemId: jump.dataset.jump, label }), "Redraw");
+      }
     }
   });
 
@@ -221,6 +231,64 @@
   function syncBoxTokens() {
     for (const box of imgwrap.querySelectorAll(".box")) renderPips(box.dataset.item, tokenCounts(box.dataset.item));
   }
+  // Drawing a box on the photo: for a missing item (while "Add a missing item" is open), or to
+  // move an item's box where it is really printed.
+  let drawing = null;  // { itemId, label } when redrawing, {} when adding a missing item
+  let drewAt = 0;
+  const draft = Object.assign(document.createElement("div"), { className: "box draft", hidden: true });
+  imgwrap.append(draft);
+  const manual = document.getElementById("manual-entry");
+  function startDrawing(mode) {
+    drawing = mode;
+    imgwrap.classList.add("drawing");
+    document.getElementById("selection-hint").textContent = mode.itemId
+      ? `Drag over ${mode.label}` : "Drag over the missing line";
+    if (mode.itemId) feedback(`Drag over ${mode.label} on the photo.`, stopDrawing, "Cancel");
+  }
+  function stopDrawing() {
+    drawing = null;
+    imgwrap.classList.remove("drawing");
+    draft.hidden = true;
+    paintSelection();
+  }
+  manual?.addEventListener("toggle", () => (manual.open ? startDrawing({}) : stopDrawing()));
+  dragRect(imgwrap, imgwrap.querySelector("img"), () => drawing, (rect, done) => {
+    if (done && rect.w < 0.02 && rect.h < 0.02) {  // A tap: a line-sized box centered on it.
+      rect = { x: rect.x - 0.3, y: rect.y - 0.025, w: 0.6, h: 0.05 };
+    }
+    draft.hidden = false;
+    placeRect(draft, rect);
+    if (!done) return;
+    drewAt = Date.now();
+    const center = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2, w: rect.w, h: rect.h };
+    if (drawing.itemId) {
+      saveBox(drawing.itemId, center);
+      stopDrawing();
+      return;
+    }
+    const form = manual.querySelector("form");
+    for (const [key, value] of Object.entries(center)) {
+      Object.assign(form.elements[key], { value: value.toFixed(4), disabled: false });
+    }
+    form.elements.label.focus({ preventScroll: true });
+    form.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+  async function saveBox(itemId, center) {
+    const body = new FormData();
+    for (const [key, value] of Object.entries(center)) body.append(key, value.toFixed(4));
+    try {
+      const response = await fetch(`/r/${rid}/items/${itemId}/box`, { method: "POST", body });
+      const event = await response.json();
+      if (!response.ok) throw new Error(event.detail || "Couldn’t move the box. Please try again.");
+      moveBox(event);
+      feedback(`Box moved for ${itemLabel(itemId)}.`);
+    } catch (error) { feedback(error.message); }
+  }
+  function moveBox(event) {
+    const box = imgwrap.querySelector(`.box[data-item="${event.item_id}"]`);
+    if (box) { placeRect(box, event); highlight(box); }
+  }
+
   function presence(state, text) {
     const el = document.getElementById("presence");
     el.dataset.state = state; // Styles the status dot; the text stays the accessible signal.
@@ -231,6 +299,8 @@
       presence("live", `Live · ${event.online} online`);
     } else if (event.type === "removed") {
       location.href = `/t/${board.dataset.tab}?removed=${rid}`;
+    } else if (event.type === "box") {
+      moveBox(event);
     } else if (event.type === "error") {
       feedback(event.detail || "That change couldn’t be saved.");
     } else if (!saving) { // Our own queued edits refresh once they settle.

@@ -55,12 +55,13 @@
         </div>
         {% endfor %}
       </div>
-      <details class="panel manual-entry"><summary>{{ icon("plus") }}Add a missing item</summary>
-        <p class="muted">Add only missing lines. Verify prices against the original receipt.</p>
-        <form method="post" action="/r/{{ receipt.id }}/items" class="row">
-          <label class="grow">Item name<input name="label" placeholder="As printed on the receipt" required maxlength="120"></label>
-          <label>Line total (€)<input name="price" placeholder="12,50" required inputmode="decimal"></label>
-          <button>{{ icon("plus") }}Add missing item</button>
+      <details class="panel manual-entry" id="manual-entry"><summary>{{ icon("plus") }}Add a missing item</summary>
+        <p class="muted">Drag across the line on the photo, then name it. Check the price on the receipt.</p>
+        <form method="post" action="/r/{{ receipt.id }}/items" class="manual-form">
+          {% for key in ("x", "y", "w", "h") %}<input type="hidden" name="{{ key }}" disabled>{% endfor %}
+          <label class="manual-name">Item name<input name="label" placeholder="As printed on the receipt" required maxlength="120"></label>
+          <label class="manual-price">Price (€)<input name="price" placeholder="2,10" required inputmode="decimal"></label>
+          <button>{{ icon("plus") }}Add item</button>
         </form>
       </details>
     </div>
@@ -69,5 +70,6 @@
 </div>
 <div id="board-feedback" class="feedback-toast" role="status" aria-live="polite" hidden><span></span><button type="button" id="undo-token" hidden>Undo</button></div>
 <script src="/static/hit-test.js?v=3" defer></script>
-<script src="/static/receipt.js?v=6" defer></script>
+<script src="/static/drag-rect.js?v=1" defer></script>
+<script src="/static/receipt.js?v=7" defer></script>
 {% endblock %}

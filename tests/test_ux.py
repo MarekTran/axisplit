@@ -21,10 +21,12 @@ async def client(tmp_path, monkeypatch):
     uploads.mkdir()
     monkeypatch.setattr(receipts, "UPLOAD_DIR", uploads)
     monkeypatch.setattr(images, "UPLOAD_DIR", uploads)
-    monkeypatch.setattr(ocr, "extract_items", lambda _: [
+    client_focus = []
+    monkeypatch.setattr(ocr, "extract_items", lambda _, focus: client_focus.append(focus) or [
         ocr.ExtractedItem("Mango tea", 695, .2, .4, .6, .02),
         ocr.ExtractedItem("Watermelon tea", 695, .2, .43, .6, .02),
     ])
+    monkeypatch.setattr(ocr, "extract_total", lambda _: 1390)
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
@@ -40,6 +42,7 @@ async def client(tmp_path, monkeypatch):
                                      base_url="http://test", follow_redirects=True) as c:
             await c.post("/claim", data={"username": "Adam", "next": "/"})
             c.sessions = sessions
+            c.focus = client_focus
             yield c
     finally:
         app.dependency_overrides.clear()
@@ -168,3 +171,45 @@ async def test_extra_tokens_weight_the_split_and_come_off_one_at_a_time(client):
     assert counts == {"Marek": 3, "Nina": 1}
     review = await client.get(f"/r/{receipt_id}/review")
     assert "5,21 €" in review.text and "1,74 €" in review.text
+
+
+async def test_focus_area_is_stored_and_sent_to_ocr(client):
+    tab = await client.post("/tabs", data={"name": "Dinner"})
+    tab_id = tab.url.path.rsplit("/", 1)[-1]
+    page = await client.post(f"/t/{tab_id}/receipts", files={"image": ("check.jpg", photo(), "image/jpeg")},
+                             data={"focus_x": ".1", "focus_y": ".3", "focus_w": ".8", "focus_h": ".4"})
+    receipt_id = page.url.path.rsplit("/", 1)[-1]
+    assert client.focus == [(.1, .3, .8, .4)]
+    async with client.sessions() as session:
+        receipt = await session.get(Receipt, receipt_id)
+        assert (receipt.focus_x, receipt.focus_h, receipt.printed_total_cents) == (.1, .4, 1390)
+    assert "match the receipt total" in page.text
+
+
+async def test_printed_total_flags_a_missing_item(client, monkeypatch):
+    monkeypatch.setattr(ocr, "extract_total", lambda _: 2000)
+    _, receipt_id = await upload(client)
+    assert client.focus == [None]  # no focus drawn: whole photo
+    review = await client.get(f"/r/{receipt_id}/review")
+    assert "Items add up to 13,90 €" in review.text and "6,10 € missing" in review.text
+    await client.post(f"/r/{receipt_id}/items", data={"label": "Cake", "price": "6,10",
+                                                       "x": ".5", "y": ".6", "w": ".5", "h": ".04"})
+    review = await client.get(f"/r/{receipt_id}/review")
+    assert "match the receipt total" in review.text
+    cake = next(i for i in await items_for(client, receipt_id) if i.label == "Cake")
+    assert (round(cake.x, 3), round(cake.y, 3), cake.w, cake.h) == (.25, .58, .5, .04)
+
+
+async def test_redrawing_a_box_keeps_shares_and_confirmations(client):
+    _, receipt_id = await upload(client)
+    first, second = await items_for(client, receipt_id)
+    for item in (first, second):
+        await op(client, receipt_id, "place", item_id=item.id, username="Adam")
+    await op(client, receipt_id, "confirm")
+    moved = await client.post(f"/r/{receipt_id}/items/{second.id}/box",
+                              data={"x": ".5", "y": ".55", "w": ".6", "h": ".04"})
+    assert moved.json()["type"] == "box"
+    _, second_after = await items_for(client, receipt_id)
+    assert (round(second_after.y, 3), second_after.h) == (.53, .04)
+    async with client.sessions() as session:
+        assert len(list(await session.scalars(select(Confirmation)))) == 1

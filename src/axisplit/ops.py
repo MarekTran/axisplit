@@ -108,17 +108,18 @@ async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -
     raise HTTPException(422, f"unknown op {kind!r}")
 
 
+def clamp_box(x: float, y: float, w: float, h: float) -> dict[str, float]:
+    """Keep a normalized box on the photo and big enough to tap."""
+    return {"x": max(0.0, min(x, 0.95)), "y": max(0.0, min(y, 0.95)),
+            "w": max(0.05, min(w, 1.0 - x)), "h": max(0.03, min(h, 1.0 - y))}
+
+
 async def add_item(session: AsyncSession, receipt: Receipt, label: str, price_cents: int,
                    bbox: tuple[float, float, float, float] | None = None) -> Item:
     count = len(await get_receipt_items(session, receipt.id))
     if bbox is None:
         bbox = (0.03, min(0.9, 0.05 + count * 0.12), 0.9, 0.1)
-    x, y, w, h = bbox
-    item = Item(
-        id=new_id(), receipt_id=receipt.id, label=label, price_cents=price_cents,
-        x=max(0.0, min(x, 0.95)), y=max(0.0, min(y, 0.95)),
-        w=max(0.05, min(w, 1.0 - x)), h=max(0.03, min(h, 1.0 - y)),
-    )
+    item = Item(id=new_id(), receipt_id=receipt.id, label=label, price_cents=price_cents, **clamp_box(*bbox))
     session.add(item)
     for confirmation in await session.scalars(
         select(Confirmation).where(Confirmation.receipt_id == receipt.id)

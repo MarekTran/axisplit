@@ -30,10 +30,21 @@
 
 <form method="post" action="/t/{{ tab.id }}/receipts" enctype="multipart/form-data" data-busy="Reading the receipt…" class="upload-form" id="upload">
   <label class="btn large upload-button">{{ icon("camera") }}<span data-busy-label>Add receipt photo</span>
-    <input id="receipt-image" class="visually-hidden" type="file" name="image" accept="image/jpeg,image/png,image/webp" required data-autosubmit></label>
+    <input id="receipt-image" class="visually-hidden" type="file" name="image" accept="image/jpeg,image/png,image/webp" required></label>
+  {% for key in ("x", "y", "w", "h") %}<input type="hidden" name="focus_{{ key }}" disabled>{% endfor %}
   <noscript><button class="secondary">Upload</button></noscript>
   <p class="muted busy-help" hidden role="status">Finding the items. This can take a while; please don’t upload it again.</p>
 </form>
+<dialog id="focus-dialog" class="focus-dialog" aria-labelledby="focus-title">
+  <h2 id="focus-title">Where are the items?</h2>
+  <p class="muted">Drag over the item lines and their prices. Leave out the total.</p>
+  <div class="focus-surface"><img id="focus-preview" alt="The chosen receipt photo" draggable="false"><div class="focus-rect" hidden></div></div>
+  <div class="dialog-actions">
+    <button type="button" class="text-button" data-close-dialog>Cancel</button>
+    <button type="button" class="secondary" data-focus="whole">Use whole photo</button>
+    <button type="button" data-focus="detect" disabled>Detect items</button>
+  </div>
+</dialog>
 
 <section id="receipts">
   <div class="section-head"><h2>Receipts</h2></div>
@@ -98,4 +109,6 @@
     </form>
   </div>
 </section>
+<script src="/static/drag-rect.js?v=1" defer></script>
+<script src="/static/focus.js?v=1" defer></script>
 {% endblock %}

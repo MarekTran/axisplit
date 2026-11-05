@@ -35,10 +35,6 @@ document.addEventListener("submit", (event) => {
   form.querySelector(".busy-help")?.removeAttribute("hidden");
 });
 
-// Picking the photo is the upload: one tap on phones, no separate submit button.
-document.addEventListener("change", (event) => {
-  if (event.target.matches("[data-autosubmit]") && event.target.files.length) event.target.form.requestSubmit();
-});
 
 // Back/forward cache can restore a submitted form with its button still disabled.
 window.addEventListener("pageshow", (event) => {

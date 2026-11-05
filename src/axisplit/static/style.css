@@ -133,8 +133,6 @@ label input { margin-top: .35rem; font-weight: 400; }
 .input-group { display: flex; gap: .5rem; margin-top: .35rem; }
 .input-group > input { flex: 1; margin-top: 0; }
 .input-group > button { flex: none; }
-.row { display: flex; flex-direction: column; gap: .75rem; }
-.grow { flex: 1; }
 .stack { display: flex; flex-direction: column; gap: .9rem; }
 
 /* Busy forms keep a visible spinner instead of looking disabled. */
@@ -245,6 +243,13 @@ dialog h2 { font-size: 1.2rem; }
 dialog p { font-size: .93rem; }
 .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; margin-top: 1.25rem; }
 .dialog-actions form { margin: 0; }
+/* Upload focus area: the photo with a draggable rectangle; outside it is dimmed. */
+.focus-dialog { width: min(560px, calc(100% - 1rem)); max-height: calc(100vh - 1rem); max-height: calc(100dvh - 1rem); padding: 1rem; }
+.focus-dialog .dialog-actions { margin-top: .75rem; }
+.focus-surface { position: relative; width: fit-content; margin: .5rem auto 0; overflow: hidden; border-radius: 8px;
+  touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.focus-surface img { display: block; max-width: 100%; max-height: 58vh; max-height: 58dvh; -webkit-touch-callout: none; }
+.focus-rect { position: absolute; border: 2px solid #fff; border-radius: 4px; box-shadow: 0 0 0 9999px rgb(0 0 0 / .5); pointer-events: none; }
 
 /* ---------- Receipt board ---------- */
 /* The person picker sticks to the top so the current selection stays visible over a long photo. */
@@ -295,7 +300,15 @@ button.pip { --btn-bg: var(--c); --btn-hover: var(--c); --btn-fg: #fff; position
 .manual-entry summary { display: flex; align-items: center; gap: .55rem; padding: .85rem 1rem; cursor: pointer; font-size: .92rem; font-weight: 600; list-style: none; }
 .manual-entry summary::-webkit-details-marker { display: none; }
 .manual-entry > p, .manual-entry > form { margin-inline: 1rem; }
-.manual-entry .row { padding-bottom: 1rem; }
+/* The name gets the width; a price is a few characters. */
+.manual-form { display: grid; grid-template-columns: 8rem minmax(0, 1fr); align-items: end; gap: .6rem; padding-bottom: 1rem; }
+.manual-name { grid-column: 1 / -1; }
+.manual-price input { text-align: right; font-variant-numeric: tabular-nums; }
+/* Drawing a box: drags draw instead of scrolling, and taps don't place tokens. */
+.imgwrap.drawing { touch-action: none; cursor: crosshair; }
+.box.draft { z-index: 4; border: 2px solid var(--box-hit); background: rgb(79 143 232 / .22); box-shadow: 0 0 0 3px rgb(79 143 232 / .35); }
+.total-check { margin: -.25rem 0 .75rem; color: var(--success); font-size: .86rem; font-weight: 600; }
+.notice.total-check { margin-top: 0; color: var(--text); font-weight: 400; }
 #quickadd { position: absolute; z-index: 6; width: min(85%, 300px); padding: .65rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow); cursor: auto; }
 #quickadd .qa-row { display: flex; gap: .3rem; margin-top: .4rem; }
 #quickadd .qa-row input { flex: 1; }
@@ -356,7 +369,8 @@ li.unassigned .item-jump { --btn-bg: var(--box-open); --btn-fg: var(--box-open-i
   main { padding-top: 1rem; }
   main.narrow { padding-top: 3rem; }
   .panel { padding: 1.4rem; }
-  .row { flex-direction: row; align-items: end; }
+  .manual-form { grid-template-columns: minmax(0, 1fr) 8rem auto; }
+  .manual-name { grid-column: auto; }
   .upload-form .btn.large { width: auto; }
   .token-toolbar { margin-inline: 0; padding-inline: 0; }
   .tokenbar { flex-wrap: wrap; margin-inline: 0; padding-inline: 0; overflow: visible; }

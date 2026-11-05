@@ -116,11 +116,13 @@ def main():
             wait(peer, lambda d: "27,50 €" in d.find_element("id", "review").text)
             print("repeat taps stack tokens, shares follow parts, a chip takes one off: OK")
 
-            # Duplicate upload using the actual file chooser; choosing the photo submits it.
+            # Duplicate upload using the actual file chooser, then the focus step ("Use whole photo").
             photo = Path(data) / "duplicate.jpg"
             photo.write_bytes(image.getvalue())
             adam.get(f"{BASE}/t/{tab}")
             adam.find_element("id", "receipt-image").send_keys(str(photo))
+            wait(adam, lambda d: d.find_element("id", "focus-dialog").is_displayed())
+            adam.find_element("css selector", '[data-focus="whole"]').click()
             wait(adam, lambda d: "already in the tab" in d.find_element("tag name", "main").text)
             assert adam.current_url.endswith(f"/r/{rid}?duplicate=1")
             print("duplicate upload reuses existing receipt: OK")

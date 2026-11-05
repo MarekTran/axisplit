@@ -2,6 +2,10 @@
 <section id="review" class="review-panel" data-status="{{ receipt.status }}" data-status-label="{{ receipt.status | status_label }}" aria-label="Items and shares">
   <div class="review-head"><h2>Items</h2><span class="muted">{{ summary.assigned_count }}/{{ summary.item_count }} assigned{% if summary.unassigned_count %} · {{ summary.unassigned_total | eur }} left{% endif %}</span></div>
   <progress value="{{ summary.assigned_count }}" max="{{ summary.item_count or 1 }}" aria-label="Items assigned"></progress>
+  {% if items and receipt.printed_total_cents is not none %}{% set gap = receipt.printed_total_cents - summary.total %}
+    {% if gap == 0 %}<p class="total-check">✓ Items match the receipt total, {{ receipt.printed_total_cents | eur }}.</p>
+    {% else %}<p class="notice warning compact total-check">Items add up to {{ summary.total | eur }}, but the receipt total reads {{ receipt.printed_total_cents | eur }}: {{ gap | abs | eur }} {{ 'missing' if gap > 0 else 'too much' }}. Add the missing item or fix a price.</p>{% endif %}
+  {% endif %}
 
   <ol class="item-review">
   {% for item in items %}

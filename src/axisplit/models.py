@@ -54,6 +54,13 @@ class Receipt(Base):
     currency: Mapped[str] = mapped_column(String, default="EUR")
     status: Mapped[str] = mapped_column(String, default=ReceiptStatus.AWAITING_ITEMS.value)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Focus area the uploader drew around the item lines (normalized 0..1); OCR reads only this.
+    focus_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    focus_y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    focus_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    focus_h: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Grand total as printed, read by a separate OCR call to cross-check the items.
+    printed_total_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     tab: Mapped[Tab] = relationship(back_populates="receipts")
     items: Mapped[list["Item"]] = relationship(back_populates="receipt", cascade="all, delete-orphan")
