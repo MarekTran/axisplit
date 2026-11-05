@@ -53,6 +53,14 @@ class Detection(BaseModel):
     items: list[DetectedItem]
 
 
+class TotalDetection(BaseModel):
+    total_cents: int | None
+
+
+Focus = tuple[float, float, float, float]  # x, y, w, h of the user's items area, normalized to the photo
+MAX_SIDE = 1600  # longest image side sent to the model
+
+
 PROMPT = """Extract the purchased line items from this receipt photograph.
 Return JSON: {"items":[{"label":"name as printed","price_cents":100,
 "bbox":[x1,y1,x2,y2]}]}.
@@ -71,11 +79,24 @@ left/top origin, x scaled by whole image width, y scaled by whole image height.
 Boxes must tightly cover the printed line (multiple lines if the name wraps).
 """
 
+FOCUS_NOTE = """The user cropped this image to the purchased item lines and their prices.
+The grand total and other numbers on the receipt are outside it. Treat this
+cropped image as the whole image for bbox coordinates.
+"""
+
+TOTAL_PROMPT = """What is the grand total of this receipt: the final amount to pay, as printed
+(often labeled Total, Celkom, Celkem, Suma, Summe, or next to the currency)?
+Return JSON {"total_cents": 6180} in integer cents. Use null if no total is readable.
+"""
+
 
 class Backend:
     name = "base"
 
-    def extract_items(self, image: Path) -> list[ExtractedItem]:
+    def extract_items(self, image: Path, focus: Focus | None = None) -> list[ExtractedItem]:
+        raise NotImplementedError
+
+    def extract_total(self, image: Path) -> int | None:
         raise NotImplementedError
 
 
@@ -83,20 +104,45 @@ class StubBackend(Backend):
     """Explicit opt-in for isolated UI tests only, never the app default."""
     name = "stub"
 
-    def extract_items(self, image: Path) -> list[ExtractedItem]:
+    def extract_items(self, image: Path, focus: Focus | None = None) -> list[ExtractedItem]:
         return []
+
+    def extract_total(self, image: Path) -> int | None:
+        return None
 
 
 class LocalVisionBackend(Backend):
     name = "local-vision"
 
-    def extract_items(self, image: Path) -> list[ExtractedItem]:
-        # Uniform resize, no crop: normalized boxes retain the original frame.
+    def extract_items(self, image: Path, focus: Focus | None = None) -> list[ExtractedItem]:
+        fx, fy, fw, fh = focus or (0.0, 0.0, 1.0, 1.0)
         with Image.open(image) as im:
-            im = im.convert("RGB")
-            im.thumbnail((1600, 1600))
-            buf = io.BytesIO()
-            im.save(buf, format="JPEG", quality=95)
+            if focus:  # Only the items area, upscaled: fewer stray numbers, more pixels per line.
+                width, height = im.size
+                im = im.crop((round(fx * width), round(fy * height),
+                              round((fx + fw) * width), round((fy + fh) * height)))
+                scale = MAX_SIDE / max(im.size)
+                if scale > 1:  # Uniform, so the crop's 0..1000 frame is unchanged.
+                    im = im.resize((round(im.width * scale), round(im.height * scale)), Image.LANCZOS)
+            result = self._ask(im, FOCUS_NOTE + PROMPT if focus else PROMPT, Detection)
+        # Boxes come back in the sent image's 0..1000 frame; map them onto the whole photo.
+        return [ExtractedItem(
+            label=i.label, price_cents=i.price_cents,
+            x=fx + i.bbox[0] / 1000 * fw, y=fy + i.bbox[1] / 1000 * fh,
+            w=(i.bbox[2] - i.bbox[0]) / 1000 * fw,
+            h=(i.bbox[3] - i.bbox[1]) / 1000 * fh,
+        ) for i in result.items]
+
+    def extract_total(self, image: Path) -> int | None:
+        with Image.open(image) as im:  # Whole photo: the total sits outside the items area.
+            return self._ask(im, TOTAL_PROMPT, TotalDetection).total_cents
+
+    def _ask(self, im: Image.Image, prompt: str, schema: type[BaseModel]) -> BaseModel:
+        # Uniform resize only: normalized boxes keep the frame of the image sent.
+        im = im.convert("RGB")
+        im.thumbnail((MAX_SIDE, MAX_SIDE))
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=95)
         encoded = base64.b64encode(buf.getvalue()).decode()
         url = os.environ.get("AXISPLIT_OCR_URL", "http://127.0.0.1:8081/v1")
         response = httpx.post(
@@ -108,10 +154,10 @@ class LocalVisionBackend(Backend):
                 "max_tokens": 4096,
                 "response_format": {
                     "type": "json_schema",
-                    "json_schema": {"name": "receipt", "schema": Detection.model_json_schema()},
+                    "json_schema": {"name": "receipt", "schema": schema.model_json_schema()},
                 },
                 "messages": [{"role": "user", "content": [
-                    {"type": "text", "text": PROMPT},
+                    {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": {
                         "url": f"data:image/jpeg;base64,{encoded}",
                     }},
@@ -122,13 +168,7 @@ class LocalVisionBackend(Backend):
         completion = response.json()["choices"][0]
         if completion.get("finish_reason") == "length":
             raise ValueError("OCR response truncated; no partial items saved")
-        result = Detection.model_validate_json(completion["message"]["content"])
-        return [ExtractedItem(
-            label=i.label, price_cents=i.price_cents,
-            x=i.bbox[0] / 1000, y=i.bbox[1] / 1000,
-            w=(i.bbox[2] - i.bbox[0]) / 1000,
-            h=(i.bbox[3] - i.bbox[1]) / 1000,
-        ) for i in result.items]
+        return schema.model_validate_json(completion["message"]["content"])
 
 
 _backend: Backend | None = None
@@ -147,5 +187,9 @@ def get_backend() -> Backend:
     return LocalVisionBackend()
 
 
-def extract_items(image: Path) -> list[ExtractedItem]:
-    return get_backend().extract_items(image)
+def extract_items(image: Path, focus: Focus | None = None) -> list[ExtractedItem]:
+    return get_backend().extract_items(image, focus)
+
+
+def extract_total(image: Path) -> int | None:
+    return get_backend().extract_total(image)

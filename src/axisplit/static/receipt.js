@@ -14,21 +14,26 @@
   let reviewTimer;
   let feedbackTimer;
   let undo;
-  const pending = new Set();
+  let saving = 0; // Edits in flight. The review is refreshed once they have all settled.
+  let queue = Promise.resolve();
 
-  function feedback(message, undoAction = null) {
+  // The toast's button undoes a token op, or runs another action (a function) under its own label.
+  function feedback(message, undoAction = null, label = "Undo") {
     const toast = document.getElementById("board-feedback");
     toast.querySelector("span").textContent = message;
     toast.hidden = false;
     undo = undoAction;
-    document.getElementById("undo-token").hidden = !undoAction;
+    const button = document.getElementById("undo-token");
+    button.hidden = !undoAction;
+    button.textContent = label;
     clearTimeout(feedbackTimer);
     feedbackTimer = setTimeout(() => { toast.hidden = true; undo = null; }, 8000);
   }
   document.getElementById("undo-token").addEventListener("click", () => {
     const action = undo;
     undo = null;
-    if (action) send(action, false);
+    if (typeof action === "function") action();
+    else if (action) send(action, false);
   });
 
   function paintSelection() {
@@ -38,8 +43,9 @@
       token.setAttribute("aria-pressed", String(active));
     }
     document.getElementById("selection-hint").textContent = selected
-      ? `Placing ${selected}’s token · tap what they had`
+      ? `Tap what ${selected} had`
       : "Choose a person, then tap what they had.";
+    board.style.setProperty("--sel-c", colors[selected] || ""); // Tints the "+" on every item row.
   }
   tokenbar.addEventListener("click", (event) => {
     const token = event.target.closest(".token");
@@ -64,49 +70,68 @@
     box.classList.add("hit");
     setTimeout(() => box.classList.remove("hit"), 1500);
   }
+  function place(itemId) {
+    if (!who) { feedback("Choose your name before placing tokens."); return; }
+    if (!selected) { feedback("Choose a person above first."); return; }
+    send({ op: "place", item_id: itemId, username: selected });
+  }
   imgwrap.addEventListener("click", (event) => {
+    if (drawing || Date.now() - drewAt < 500) return;  // That press drew a box.
     const pip = event.target.closest("button.pip");
     if (pip) {
       send({ op: "unplace", item_id: pip.closest(".box").dataset.item, username: pip.dataset.user });
       return;
     }
-    if (!who) { feedback("Choose your name before placing tokens."); return; }
-    if (!selected) { feedback("Choose a person above first."); return; }
     const target = resolveItem(event.clientX, event.clientY);
     if (!target) { feedback("Detect the receipt first, or add a missing item below."); return; }
-    highlight(target.el);
-    send({ op: "place", item_id: target.id, username: selected });
+    if (who && selected) highlight(target.el);
+    place(target.id);
   });
 
   // Delegation survives SSR review-fragment replacements.
   board.addEventListener("click", (event) => {
-    const toggle = event.target.closest(".person-toggle");
-    if (toggle) send({
-      op: toggle.getAttribute("aria-pressed") === "true" ? "unplace" : "place",
-      item_id: toggle.dataset.item, username: toggle.dataset.user,
-    });
+    // List rows mirror the photo: a row adds the selected person, a holder chip takes theirs off.
+    const add = event.target.closest("[data-add]");
+    if (add) place(add.dataset.add);
+    const holder = event.target.closest(".holder");
+    if (holder) send({ op: "unplace", item_id: holder.dataset.item, username: holder.dataset.user });
     const confirm = event.target.closest("[data-confirm]");
     if (confirm && !confirm.disabled) send({ op: confirm.dataset.confirm });
     const jump = event.target.closest("[data-jump]");
     if (jump) {
       const box = imgwrap.querySelector(`.box[data-item="${jump.dataset.jump}"]`);
-      if (box) { box.scrollIntoView({ block: "center", behavior: "smooth" }); highlight(box); }
+      if (box) {
+        box.scrollIntoView({ block: "center", behavior: "smooth" });
+        highlight(box);
+        const label = itemLabel(jump.dataset.jump);
+        feedback(`${label}: box in the wrong spot?`, () => startDrawing({ itemId: jump.dataset.jump, label }), "Redraw");
+      }
     }
   });
 
   function itemLabel(id) {
-    return board.querySelector(`.item-review li[data-item="${id}"] .item-heading > strong`)?.textContent || "item";
+    return board.querySelector(`.item-review li[data-item="${id}"] .item-add > strong`)?.textContent || "item";
   }
-  async function send(op, allowUndo = true) {
+  // Edits queue up in order, so tapping an item five times places five tokens.
+  function send(op, allowUndo = true) {
     if (!who) { location.href = `/claim?next=${encodeURIComponent(location.pathname)}`; return; }
-    const key = `${op.op}:${op.item_id || ""}:${op.username || ""}`;
-    if (pending.has(key)) return;
-    pending.add(key);
+    let message = null;
+    if (op.op === "place" || op.op === "unplace") {
+      const counts = tokenCounts(op.item_id);
+      const count = (counts.get(op.username) || 0) + (op.op === "place" ? 1 : -1);
+      if (count < 0) return;
+      counts.set(op.username, count);
+      renderTokens(op.item_id, counts); // Show the new count right away; the server's review replaces it.
+      const label = itemLabel(op.item_id);
+      message = !count ? `${op.username} removed from ${label}. Saved.`
+        : count === 1 && op.op === "place" ? `${op.username} added to ${label}. Saved.`
+        : `${op.username} ×${count} on ${label}. Saved.`;
+    }
     feedback("Saving…");
-    const label = itemLabel(op.item_id);
-    // Remember whether this is a true change (placing an existing token is a no-op).
-    const box = op.item_id && imgwrap.querySelector(`.box[data-item="${op.item_id}"]`);
-    const hadToken = box && [...box.querySelectorAll(".pip")].some(p => p.dataset.user === op.username);
+    saving++;
+    queue = queue.then(() => save(op, message, allowUndo)).finally(() => { if (!--saving) refreshReview(); });
+  }
+  async function save(op, message, allowUndo) {
     try {
       const response = await fetch(`/r/${rid}/ops`, {
         method: "POST", headers: { "content-type": "application/json" },
@@ -114,18 +139,13 @@
       });
       const event = await response.json();
       if (!response.ok) throw new Error(event.detail || "Couldn’t save. Please try again.");
-      if (op.op === "place" || op.op === "unplace") {
-        const changed = op.op === "place" ? !hadToken : hadToken;
-        const inverse = allowUndo && changed ? { ...op, op: op.op === "place" ? "unplace" : "place" } : null;
-        feedback(`${op.username} ${op.op === "place" ? "added to" : "removed from"} ${label}. Saved.`, inverse);
+      if (message) {
+        feedback(message, allowUndo ? { ...op, op: op.op === "place" ? "unplace" : "place" } : null);
       } else {
         feedback(op.op === "confirm" ? "Your confirmation is saved. Others can now check their shares." : "Your confirmation was withdrawn.");
       }
-      await refreshReview();
     } catch (error) {
       feedback(error.message || "Connection lost. Your change wasn’t confirmed; please retry.");
-    } finally {
-      pending.delete(key);
     }
   }
 
@@ -138,17 +158,18 @@
       if (response.status === 410) { location.href = `/t/${board.dataset.tab}?removed=${rid}`; return; }
       if (!response.ok) throw new Error("Couldn’t refresh shares. Reload to check the latest split.");
       const html = await response.text();
-      if (version !== reviewVersion) return;
+      if (version !== reviewVersion || saving) return; // Newer taps are showing; refresh again after them.
       const next = new DOMParser().parseFromString(html, "text/html").getElementById("review");
       // Preserve keyboard focus when a control is replaced by server-rendered HTML.
       const active = document.activeElement;
       const focus = active?.closest("#review") ? {
-        item: active.dataset.item, user: active.dataset.user, confirm: active.dataset.confirm,
+        item: active.dataset.item, user: active.dataset.user, confirm: active.dataset.confirm, add: active.dataset.add,
       } : null;
       document.getElementById("review").replaceWith(next);
       if (focus) {
-        const replacement = [...next.querySelectorAll("button")].find(button => focus.confirm
-          ? button.dataset.confirm : button.dataset.item === focus.item && button.dataset.user === focus.user);
+        const replacement = [...next.querySelectorAll("button")].find(button => focus.confirm ? button.dataset.confirm
+          : focus.add ? button.dataset.add === focus.add
+          : button.dataset.item === focus.item && button.dataset.user === focus.user);
         replacement?.focus({ preventScroll: true });
       }
       const status = document.getElementById("status");
@@ -157,35 +178,132 @@
       syncBoxTokens();
     } catch (error) { feedback(error.message); }
   }
+  // Same order and markup as review.html and receipt.html: sorted by name, count shown from 2 up.
+  function tokenCounts(itemId) {
+    return new Map([...board.querySelectorAll(`.holder[data-item="${itemId}"]`)]
+      .map(holder => [holder.dataset.user, Number(holder.dataset.count)]));
+  }
+  function byName([a], [b]) {
+    const x = a.toLowerCase(), y = b.toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  function tokenButton(className, user, label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    button.dataset.user = user;
+    button.style.setProperty("--c", colors[user] || "#888");
+    button.setAttribute("aria-label", `Remove one of ${user}’s tokens from ${label}`);
+    button.append(Object.assign(document.createElement("span"), { textContent: user.slice(0, 1) }));
+    return button;
+  }
+  function renderPips(itemId, counts) {
+    const box = imgwrap.querySelector(`.box[data-item="${itemId}"]`);
+    if (!box) return;
+    const label = itemLabel(itemId);
+    const placed = [...counts].filter(([, n]) => n > 0).sort(byName);
+    box.querySelector(".tokens").replaceChildren(...placed.map(([user, n]) => {
+      const pip = tokenButton("pip", user, label);
+      pip.title = `Remove one of ${user}’s tokens`;
+      if (n > 1) pip.append(Object.assign(document.createElement("b"), { textContent: n }));
+      return pip;
+    }));
+    box.classList.toggle("assigned", placed.length > 0);
+  }
+  function renderTokens(itemId, counts) {
+    renderPips(itemId, counts);
+    const row = board.querySelector(`.item-review li[data-item="${itemId}"]`);
+    const label = itemLabel(itemId);
+    const placed = [...counts].filter(([, n]) => n > 0).sort(byName);
+    const chips = placed.map(([user, n]) => {
+      const chip = tokenButton("holder", user, label);
+      Object.assign(chip.dataset, { item: itemId, count: n });
+      Object.assign(chip.firstChild, { className: "avatar" }).setAttribute("aria-hidden", "true");
+      chip.append(user);
+      if (n > 1) chip.append(Object.assign(document.createElement("b"), { className: "count", textContent: `×${n}` }));
+      return chip;
+    });
+    row.querySelector(".holders").replaceChildren(...(chips.length ? chips
+      : [Object.assign(document.createElement("small"), { className: "unassigned-label", textContent: "Nobody yet" })]));
+    row.classList.toggle("assigned", placed.length > 0);
+    row.classList.toggle("unassigned", !placed.length);
+  }
   function syncBoxTokens() {
-    for (const box of imgwrap.querySelectorAll(".box")) {
-      const holders = [...board.querySelectorAll(`.person-toggle[data-item="${box.dataset.item}"]`)]
-        .filter(button => button.getAttribute("aria-pressed") === "true");
-      const tokens = box.querySelector(".tokens");
-      tokens.replaceChildren();
-      for (const holder of holders) {
-        const user = holder.dataset.user;
-        const pip = document.createElement("button");
-        pip.type = "button";
-        pip.className = "pip";
-        pip.dataset.user = user;
-        pip.style.setProperty("--c", colors[user] || "#888");
-        pip.textContent = user.slice(0, 1);
-        pip.setAttribute("aria-label", `Remove ${user} from ${itemLabel(box.dataset.item)}`);
-        pip.title = `Remove ${user}`;
-        tokens.append(pip);
-      }
-      box.classList.toggle("assigned", holders.length > 0);
+    for (const box of imgwrap.querySelectorAll(".box")) renderPips(box.dataset.item, tokenCounts(box.dataset.item));
+  }
+  // Drawing a box on the photo: for a missing item (while "Add a missing item" is open), or to
+  // move an item's box where it is really printed.
+  let drawing = null;  // { itemId, label } when redrawing, {} when adding a missing item
+  let drewAt = 0;
+  const draft = Object.assign(document.createElement("div"), { className: "box draft", hidden: true });
+  imgwrap.append(draft);
+  const manual = document.getElementById("manual-entry");
+  function startDrawing(mode) {
+    drawing = mode;
+    imgwrap.classList.add("drawing");
+    document.getElementById("selection-hint").textContent = mode.itemId
+      ? `Drag over ${mode.label}` : "Drag over the missing line";
+    if (mode.itemId) feedback(`Drag over ${mode.label} on the photo.`, stopDrawing, "Cancel");
+  }
+  function stopDrawing() {
+    drawing = null;
+    imgwrap.classList.remove("drawing");
+    draft.hidden = true;
+    paintSelection();
+  }
+  manual?.addEventListener("toggle", () => (manual.open ? startDrawing({}) : stopDrawing()));
+  dragRect(imgwrap, imgwrap.querySelector("img"), () => drawing, (rect, done) => {
+    if (done && rect.w < 0.02 && rect.h < 0.02) {  // A tap: a line-sized box centered on it.
+      rect = { x: rect.x - 0.3, y: rect.y - 0.025, w: 0.6, h: 0.05 };
     }
+    draft.hidden = false;
+    placeRect(draft, rect);
+    if (!done) return;
+    drewAt = Date.now();
+    const center = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2, w: rect.w, h: rect.h };
+    if (drawing.itemId) {
+      saveBox(drawing.itemId, center);
+      stopDrawing();
+      return;
+    }
+    const form = manual.querySelector("form");
+    for (const [key, value] of Object.entries(center)) {
+      Object.assign(form.elements[key], { value: value.toFixed(4), disabled: false });
+    }
+    form.elements.label.focus({ preventScroll: true });
+    form.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+  async function saveBox(itemId, center) {
+    const body = new FormData();
+    for (const [key, value] of Object.entries(center)) body.append(key, value.toFixed(4));
+    try {
+      const response = await fetch(`/r/${rid}/items/${itemId}/box`, { method: "POST", body });
+      const event = await response.json();
+      if (!response.ok) throw new Error(event.detail || "Couldn’t move the box. Please try again.");
+      moveBox(event);
+      feedback(`Box moved for ${itemLabel(itemId)}.`);
+    } catch (error) { feedback(error.message); }
+  }
+  function moveBox(event) {
+    const box = imgwrap.querySelector(`.box[data-item="${event.item_id}"]`);
+    if (box) { placeRect(box, event); highlight(box); }
+  }
+
+  function presence(state, text) {
+    const el = document.getElementById("presence");
+    el.dataset.state = state; // Styles the status dot; the text stays the accessible signal.
+    el.textContent = text;
   }
   function liveEvent(event) {
     if (event.type === "presence") {
-      document.getElementById("presence").textContent = `Live · ${event.online} online`;
+      presence("live", `Live · ${event.online} online`);
     } else if (event.type === "removed") {
       location.href = `/t/${board.dataset.tab}?removed=${rid}`;
+    } else if (event.type === "box") {
+      moveBox(event);
     } else if (event.type === "error") {
       feedback(event.detail || "That change couldn’t be saved.");
-    } else {
+    } else if (!saving) { // Our own queued edits refresh once they settle.
       clearTimeout(reviewTimer);
       reviewTimer = setTimeout(refreshReview, 80);
     }
@@ -194,10 +312,10 @@
     if (!who || closing) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/ws/receipts/${rid}?u=${encodeURIComponent(who)}`);
-    ws.onopen = () => { document.getElementById("presence").textContent = "Live updates connected"; refreshReview(); };
+    ws.onopen = () => { presence("live", "Live updates connected"); refreshReview(); };
     ws.onmessage = (event) => liveEvent(JSON.parse(event.data));
     ws.onclose = () => {
-      document.getElementById("presence").textContent = "Live updates offline · edits still save";
+      presence("offline", "Live updates offline · edits still save");
       if (!closing) setTimeout(connect, 2000);
     };
     ws.onerror = () => ws.close();

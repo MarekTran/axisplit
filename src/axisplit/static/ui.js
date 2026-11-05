@@ -26,10 +26,15 @@ document.addEventListener("submit", (event) => {
   form.dataset.submitting = "true";
   form.setAttribute("aria-busy", "true");
   const button = form.querySelector("button");
-  button.disabled = true;
-  button.textContent = form.dataset.busy;
+  if (button) {
+    button.disabled = true;
+    button.textContent = form.dataset.busy;
+  }
+  const label = form.querySelector("[data-busy-label]");
+  if (label) label.textContent = form.dataset.busy;
   form.querySelector(".busy-help")?.removeAttribute("hidden");
 });
+
 
 // Back/forward cache can restore a submitted form with its button still disabled.
 window.addEventListener("pageshow", (event) => {

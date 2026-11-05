@@ -20,8 +20,9 @@ TabMember       (tab, username) + assigned color. Anyone in a tab may add anyone
 Receipt         an uploaded image inside a tab. uploaded_by, image file, status.
 Item            one OCR-detected line: label, price (integer cents), currency,
                 bbox (x,y,w,h normalized 0..1), ocr_confidence.
-TokenAssignment (item, username) — "this person consumed/owns this item".
-                Unique per (item, username). This is the entire split state.
+TokenAssignment (item, username, count) — "this person had count parts of
+                this item". One row per (item, username); anyone can add
+                anyone's token any number of times. This is the entire split state.
 Confirmation    (receipt, username, confirmed_at) — user agrees with final
                 token layout & prices of a receipt.
 ```
@@ -33,8 +34,9 @@ are flagged for review, never silently discarded. See `docs/ux.md`.
 
 
 Settlement is **pure derived data**: for each item, each token holder owes
-`price / n_holders` (remainder cents distributed deterministically by
-holder-sort order). Debts between users are minimized optionally (greedy
+`price × count / total_count` (leftover cents go to the largest remainders,
+ties by holder-sort order). One token each is an even split; 5 Marek + 1 Adam +
+1 Nina on 7,00 € Nachos is 5,00 / 1,00 / 1,00 €. Debts between users are minimized optionally (greedy
 matching); v1 shows the raw per-item ledger.
 
 ### Receipt status machine
@@ -74,10 +76,12 @@ PENDING_CONFIRM → SETTLED (all items assigned and all token holders confirmed)
 - Clients send semantic ops: `place {item, user}`, `unplace {item, user}`,
   `confirm {user}`, presence pings. Server validates (sender must be a tab
   member) and broadcasts the resulting state event to all peers.
-- Ops are add/remove on a set → **commutative & idempotent**. No CRDT needed;
-  server is authoritative, client applies optimistic update then reconciles
-  with broadcast (no-op if already applied). Ordering conflicts (place vs
-  remove of same token simultaneously) resolve last-write-wins at the server.
+- `place` adds one more of that person's tokens, `unplace` takes one off; the
+  server applies each as a single atomic UPDATE/DELETE, so the per-person
+  counters are **commutative** and concurrent taps never lose a count. No
+  CRDT needed; server is authoritative, client shows the new count
+  immediately, queues its ops in order, and reconciles with the server's
+  review once they settle. `unplace` at zero is a no-op.
 - Presence: `presence {user, viewing}` heartbeat every 15 s; UI shows avatars
   of who is in the room.
 - HTTP fallback (htmx POST) uses the same op handlers; WS is progressive
@@ -101,7 +105,21 @@ benchmarked for accuracy across the full dataset.
   item/price semantics.
 - Classical-only (Tesseract) is ruled out for crumpled thermal paper.
 
-Pipeline contract in code: `axisplit.ocr.extract_items(path) -> list[ExtractedItem]`.
+Pipeline contract in code: `axisplit.ocr.extract_items(path, focus=None) -> list[ExtractedItem]`
+and `axisplit.ocr.extract_total(path) -> int | None`.
+
+**Focus area.** After choosing a photo, the uploader drags over the item lines and
+their prices (or picks "Use whole photo"). The area is stored on the receipt and
+trusted as drawn: OCR receives only that crop, upscaled so its longer side is 1600 px,
+so the grand total and other numbers can't be read as items, and returned boxes are
+mapped back onto the whole photo. On the demo receipt with the local Qwen VLM this
+turned 2 wrong prices and drifting boxes (whole photo) into 7 correct prices with one
+box per line; one receipt, not a benchmark.
+
+**Total cross-check.** A second, independent OCR call reads the printed grand total
+from the whole photo. The review shows whether the items add up to it, or how much
+is missing or too much, so a missed line or misread price is visible. A failed
+total read never blocks the items.
 The default is `LocalVisionBackend` at `http://127.0.0.1:8081/v1`.
 `StubBackend` is only enabled explicitly with `AXISPLIT_OCR_BACKEND=stub` for
 UI tests. Inference errors are logged and shown as detection failures, never
@@ -113,7 +131,9 @@ see an item**, and the tap resolves against OCR geometry client-side: actual
 box containment first, then 12 rendered pixels of hit slop, then nearest box
 at any distance. Overlapping candidates are ranked by distance to the box
 edge, then its center; padded boxes never steal hits inside another actual
-box. An empty receipt offers detection or manual recovery. A token
+box. An empty receipt offers detection or manual recovery. A missing item is
+added by dragging its line on the photo; a wrong box is redrawn from the item's
+number (geometry only: shares and confirmations are unchanged). A token
 can always be re-assigned, so OCR recall matters more than pixel-perfect IoU.
 
 Coordinate-space guarantee: `Item.bbox` is normalized 0..1 against the **stored,
@@ -140,7 +160,9 @@ whatever space OCR models see. Backends MUST return boxes in that space.
   in v1.
 - **Interaction:** tap a member token, then **tap the photo** where the item is
   printed; client-side geometry snaps the token to the containing/nearest OCR
-  box (spec §5). Tap a pip to remove. True DnD deliberately avoided on touch —
+  box (spec §5). Tapping again adds another token (a bigger part); tap a pip
+  to take one off. The item list works the same way: a row adds the selected
+  person, a person's chip takes one of their tokens off. True DnD deliberately avoided on touch —
   tap-tap also works one-handed on a phone at a restaurant table.
 - **Inference:** models served behind LiteLLM proxy (OpenAI-compatible) or
   run locally from the bench harness.

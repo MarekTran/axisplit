@@ -2,7 +2,7 @@
 paths. Each op returns a broadcast event dict; status is recomputed."""
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -63,16 +63,21 @@ async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -
         item = await session.get(Item, item_id)
         if item is None or item.receipt_id != receipt_id:
             raise HTTPException(404, "item not found")
-        existing = await session.get(TokenAssignment, (item_id, target))
-        if kind == "place" and existing is None:
-            session.add(TokenAssignment(item_id=item_id, username=target))
-            await session.commit()
-        elif kind == "unplace" and existing is not None:
-            await session.delete(existing)
-            await session.commit()
+        # place adds one more of target's tokens, unplace takes one off. Single UPDATE/DELETE
+        # statements, so rapid taps from several phones can't lose a count.
+        match = (TokenAssignment.item_id == item_id, TokenAssignment.username == target)
+        if kind == "place":
+            added = await session.execute(
+                update(TokenAssignment).where(*match).values(count=TokenAssignment.count + 1))
+            if not added.rowcount:
+                session.add(TokenAssignment(item_id=item_id, username=target))
         else:
-            return {"type": kind, "item_id": item_id, "username": target,
-                    "status": receipt.status}  # no-op: don't disturb confirmations
+            taken = await session.execute(update(TokenAssignment).where(
+                *match, TokenAssignment.count > 1).values(count=TokenAssignment.count - 1))
+            if not taken.rowcount and not (await session.execute(delete(TokenAssignment).where(*match))).rowcount:
+                return {"type": kind, "item_id": item_id, "username": target,
+                        "status": receipt.status}  # no-op: don't disturb confirmations
+        await session.commit()
         # spec §3: moving tokens invalidates previous confirmations
         for c in await session.scalars(select(Confirmation).where(Confirmation.receipt_id == receipt_id)):
             await session.delete(c)
@@ -103,17 +108,18 @@ async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -
     raise HTTPException(422, f"unknown op {kind!r}")
 
 
+def clamp_box(x: float, y: float, w: float, h: float) -> dict[str, float]:
+    """Keep a normalized box on the photo and big enough to tap."""
+    return {"x": max(0.0, min(x, 0.95)), "y": max(0.0, min(y, 0.95)),
+            "w": max(0.05, min(w, 1.0 - x)), "h": max(0.03, min(h, 1.0 - y))}
+
+
 async def add_item(session: AsyncSession, receipt: Receipt, label: str, price_cents: int,
                    bbox: tuple[float, float, float, float] | None = None) -> Item:
     count = len(await get_receipt_items(session, receipt.id))
     if bbox is None:
         bbox = (0.03, min(0.9, 0.05 + count * 0.12), 0.9, 0.1)
-    x, y, w, h = bbox
-    item = Item(
-        id=new_id(), receipt_id=receipt.id, label=label, price_cents=price_cents,
-        x=max(0.0, min(x, 0.95)), y=max(0.0, min(y, 0.95)),
-        w=max(0.05, min(w, 1.0 - x)), h=max(0.03, min(h, 1.0 - y)),
-    )
+    item = Item(id=new_id(), receipt_id=receipt.id, label=label, price_cents=price_cents, **clamp_box(*bbox))
     session.add(item)
     for confirmation in await session.scalars(
         select(Confirmation).where(Confirmation.receipt_id == receipt.id)

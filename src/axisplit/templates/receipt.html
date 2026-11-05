@@ -1,20 +1,21 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Split receipt — {{ tab.name }}{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
 <div id="board" data-receipt="{{ receipt.id }}" data-tab="{{ tab.id }}" data-who="{{ who }}"
      data-colors='{{ colors | tojson }}'>
-  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/t/{{ tab.id }}">← {{ tab.name }}</a><span>/</span><span>Split receipt</span></nav>
-  <div class="page-heading">
-    <div><p class="eyebrow">RECEIPT · {{ receipt.created_at | receipt_date }}</p><h1>Let’s split this fairly.</h1><p class="muted">Added by {{ receipt.uploaded_by }} · {{ items | length }} detected items</p></div>
+  <a href="/t/{{ tab.id }}" class="back-link">{{ icon("arrow-left") }}{{ tab.name }}</a>
+  <div class="page-head">
+    <div><h1>{{ receipt.created_at | receipt_date }}</h1><p class="muted">Receipt added by {{ receipt.uploaded_by }} · {{ items | length }} items</p></div>
     <span class="badge {{ receipt.status }}" id="status">{{ receipt.status | status_label }}</span>
   </div>
   {% if request.query_params.get('duplicate') %}
-  <div class="notice warning" role="status"><div><strong>This photo is already in the tab.</strong><br>We opened the existing receipt instead of charging everyone twice.</div></div>
+  <div class="notice warning" role="status"><div class="notice-body">{{ icon("alert") }}<div><strong>This photo is already in the tab.</strong><br>We opened the existing receipt instead of charging everyone twice.</div></div></div>
   {% endif %}
 
   {% if not items %}
-  <section class="notice warning" role="status"><div>
+  <section class="notice warning detect-notice" role="status"><div class="notice-body">{{ icon("sparkles") }}<div>
     {% if request.query_params.get('ocr') == 'failed' %}
       <strong>We couldn’t read the receipt.</strong><p>Start <code>axisplit-ocr</code> in another dev-shell terminal, wait for the model to load, then retry. Details are in the app log.</p>
     {% elif request.query_params.get('ocr') == 'empty' %}
@@ -22,19 +23,18 @@
     {% else %}
       <strong>This receipt needs detection.</strong><p>Start the local vision server, then detect its items.</p>
     {% endif %}
-    <form method="post" action="/r/{{ receipt.id }}/detect" data-busy="Finding items…"><button>Detect items automatically</button><p class="busy-help" hidden>Reading the receipt. Please wait.</p></form>
-  </div></section>
+    <form method="post" action="/r/{{ receipt.id }}/detect" data-busy="Finding items…"><button>{{ icon("sparkles") }}Detect items automatically</button><p class="busy-help" hidden>Reading the receipt. Please wait.</p></form>
+  </div></div></section>
   {% endif %}
   {% if not who %}<p><a class="btn" href="/claim?next=/r/{{ receipt.id }}">Choose your name to join the split</a></p>{% endif %}
 
-  <div class="token-toolbar panel">
-    <div class="toolbar-heading"><strong id="selection-hint">Choose a person, then tap what they had.</strong><span id="presence" class="connection" role="status">Connecting…</span></div>
+  <div class="token-toolbar" {% if not items %}hidden{% endif %}>
     <div class="tokenbar" id="tokenbar" role="group" aria-label="Whose token to place">
     {% for m in members %}
-      <button type="button" class="token" data-user="{{ m.username }}" style="--c: {{ m.color }}" aria-pressed="false">{{ m.username }}{% if m.username == who %}<small> · you</small>{% endif %}<span class="check" aria-hidden="true">✓</span></button>
+      <button type="button" class="token" data-user="{{ m.username }}" style="--c: {{ m.color }}" aria-pressed="false"><span class="avatar" aria-hidden="true">{{ m.username[:1] }}</span>{{ m.username }}{% if m.username == who %}<small> · you</small>{% endif %}<span class="check" aria-hidden="true">✓</span></button>
     {% endfor %}
     </div>
-    <div class="toolbar-footer"><span class="muted">Tap the printed item to add the selected person. Tap a token to remove it.</span><a href="#review">Review shares ↓</a></div>
+    <div class="toolbar-status"><span id="selection-hint">Choose a person, then tap what they had.</span><span id="presence" class="connection" role="status">Connecting…</span></div>
   </div>
 
   <div class="receipt-workspace">
@@ -47,21 +47,21 @@
           <span class="box-number">{{ loop.index }}</span>
           <span class="lbl">{{ item.label }} — {{ item.price_cents | eur }}</span>
           <span class="tokens">
-          {% for t in item.tokens %}
+          {% for t in item.tokens | sort(attribute='username') %}
             <button type="button" class="pip" data-user="{{ t.username }}" style="--c: {{ colors.get(t.username, '#888') }}"
-                    aria-label="Remove {{ t.username }} from {{ item.label }}" title="Remove {{ t.username }}"><span>{{ t.username[:1] }}</span></button>
+                    aria-label="Remove one of {{ t.username }}’s tokens from {{ item.label }}" title="Remove one of {{ t.username }}’s tokens"><span>{{ t.username[:1] }}</span>{% if t.count > 1 %}<b>{{ t.count }}</b>{% endif %}</button>
           {% endfor %}
           </span>
         </div>
         {% endfor %}
       </div>
-      <p class="photo-caption muted">Amber boxes still need people. Green boxes are assigned. Use the item list for larger controls or keyboard access.</p>
-      <details class="panel manual-entry"><summary>OCR missed an item?</summary>
-        <p class="muted">Add only missing lines. Verify prices against the original receipt.</p>
-        <form method="post" action="/r/{{ receipt.id }}/items" class="row">
-          <label class="grow">Item name<input name="label" placeholder="As printed on the receipt" required maxlength="120"></label>
-          <label>Line total (€)<input name="price" placeholder="12,50" required inputmode="decimal"></label>
-          <button>Add missing item</button>
+      <details class="panel manual-entry" id="manual-entry"><summary>{{ icon("plus") }}Add a missing item</summary>
+        <p class="muted">Drag across the line on the photo, then name it. Check the price on the receipt.</p>
+        <form method="post" action="/r/{{ receipt.id }}/items" class="manual-form">
+          {% for key in ("x", "y", "w", "h") %}<input type="hidden" name="{{ key }}" disabled>{% endfor %}
+          <label class="manual-name">Item name<input name="label" placeholder="As printed on the receipt" required maxlength="120"></label>
+          <label class="manual-price">Price (€)<input name="price" placeholder="2,10" required inputmode="decimal"></label>
+          <button>{{ icon("plus") }}Add item</button>
         </form>
       </details>
     </div>
@@ -70,5 +70,6 @@
 </div>
 <div id="board-feedback" class="feedback-toast" role="status" aria-live="polite" hidden><span></span><button type="button" id="undo-token" hidden>Undo</button></div>
 <script src="/static/hit-test.js?v=3" defer></script>
-<script src="/static/receipt.js?v=3" defer></script>
+<script src="/static/drag-rect.js?v=1" defer></script>
+<script src="/static/receipt.js?v=7" defer></script>
 {% endblock %}

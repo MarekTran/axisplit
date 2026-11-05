@@ -14,8 +14,8 @@ from ..config import ALLOWED_IMAGE_TYPES, MAX_UPLOAD_BYTES, UPLOAD_DIR, new_id
 from ..db import get_session
 from ..deps import get_tab_or_404, get_who, require_member
 from ..images import image_digest
-from ..models import Confirmation, Receipt, ReceiptStatus, TabMember
-from ..ops import add_item, apply_op, get_receipt_items, recompute_status
+from ..models import Confirmation, Item, Receipt, ReceiptStatus, TabMember
+from ..ops import add_item, apply_op, clamp_box, get_receipt_items, recompute_status
 from ..templ import templates
 from ..viewmodels import receipt_summary
 
@@ -23,11 +23,32 @@ router = APIRouter(tags=["receipts"])
 logger = logging.getLogger(__name__)
 
 
+def clean_focus(x: float | None, y: float | None, w: float | None, h: float | None) -> ocr.Focus | None:
+    """The uploader's items area, kept on the photo. Trusted as drawn; ignored if incomplete or tiny."""
+    if None in (x, y, w, h):
+        return None
+    x, y = max(0.0, min(x, 1.0)), max(0.0, min(y, 1.0))
+    w, h = min(w, 1.0 - x), min(h, 1.0 - y)
+    return (x, y, w, h) if w >= 0.05 and h >= 0.05 else None
+
+
 async def detect_receipt(session: AsyncSession, receipt: Receipt) -> str:
-    try:
-        extracted = await asyncio.to_thread(ocr.extract_items, UPLOAD_DIR / receipt.image_path)
-    except Exception:
-        logger.exception("Receipt OCR failed for %s", receipt.id)
+    path = UPLOAD_DIR / receipt.image_path
+    focus = clean_focus(receipt.focus_x, receipt.focus_y, receipt.focus_w, receipt.focus_h)
+    # Two independent reads: the items (inside the focus area) and the printed total (whole photo),
+    # so the total can check the items. A failed total never blocks the items.
+    extracted, total = await asyncio.gather(
+        asyncio.to_thread(ocr.extract_items, path, focus),
+        asyncio.to_thread(ocr.extract_total, path),
+        return_exceptions=True,
+    )
+    if isinstance(total, Exception):
+        logger.error("Receipt total OCR failed for %s", receipt.id, exc_info=total)
+    else:
+        receipt.printed_total_cents = total
+    if isinstance(extracted, Exception):
+        logger.error("Receipt OCR failed for %s", receipt.id, exc_info=extracted)
+        await session.commit()
         return "failed"
     for ex in extracted:
         session.add(ex.to_item(receipt.id))
@@ -54,6 +75,8 @@ async def upload_receipt(
     tab_id: str,
     request: Request,
     image: UploadFile = File(...),
+    focus_x: float | None = Form(None), focus_y: float | None = Form(None),
+    focus_w: float | None = Form(None), focus_h: float | None = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
     member = await require_member(tab_id, request, session)
@@ -85,8 +108,11 @@ async def upload_receipt(
         if digest == await asyncio.to_thread(image_digest, UPLOAD_DIR / existing.image_path):
             dest.unlink(missing_ok=True)
             return RedirectResponse(f"/r/{existing.id}?duplicate=1", 303)
+    focus = clean_focus(focus_x, focus_y, focus_w, focus_h)
     receipt = Receipt(id=rid, tab_id=tab.id, uploaded_by=member.username, image_path=dest.name,
                       title=image.filename or "Receipt")
+    if focus:
+        receipt.focus_x, receipt.focus_y, receipt.focus_w, receipt.focus_h = focus
     session.add(receipt)
     await session.commit()
 
@@ -146,7 +172,7 @@ async def review_fragment(receipt_id: str, request: Request,
     ))
     return templates.TemplateResponse(request, "review.html", {
         "receipt": receipt, "items": items, "members": members, "who": member.username,
-        "summary": receipt_summary(items, confirmed),
+        "colors": {m.username: m.color for m in members}, "summary": receipt_summary(items, confirmed),
     })
 
 
@@ -180,6 +206,7 @@ async def restore_receipt(receipt_id: str, request: Request,
 @router.post("/r/{receipt_id}/items")
 async def create_item(receipt_id: str, label: str = Form(...), price: str = Form(...),
                       x: float | None = Form(None), y: float | None = Form(None),
+                      w: float | None = Form(None), h: float | None = Form(None),
                       request: Request = None, session: AsyncSession = Depends(get_session)):
     receipt = await session.get(Receipt, receipt_id)
     if receipt is None:
@@ -192,10 +219,35 @@ async def create_item(receipt_id: str, label: str = Form(...), price: str = Form
     except ValueError:
         raise HTTPException(422, "bad price")
     bbox = None
-    if x is not None and y is not None:  # tap-to-add: center a line box on the tap point
-        bbox = (x - 0.30, y - 0.035, 0.60, 0.07)
+    if x is not None and y is not None:  # centered on x, y: a box dragged on the photo, or a tap
+        w, h = (w, h) if w and h else (0.60, 0.07)
+        bbox = (x - w / 2, y - h / 2, w, h)
     await add_item(session, receipt, label.strip()[:120], cents, bbox=bbox)
     return RedirectResponse(f"/r/{receipt_id}", 303)
+
+
+@router.post("/r/{receipt_id}/items/{item_id}/box")
+async def redraw_box(receipt_id: str, item_id: str, x: float = Form(...), y: float = Form(...),
+                     w: float = Form(...), h: float = Form(...),
+                     request: Request = None, session: AsyncSession = Depends(get_session)):
+    """Move an item's box where it is really printed. Geometry only: shares and confirmations stay."""
+    receipt = await session.get(Receipt, receipt_id)
+    if receipt is None:
+        raise HTTPException(404, "receipt not found")
+    await require_member(receipt.tab_id, request, session)
+    if receipt.status == ReceiptStatus.REMOVED:
+        raise HTTPException(410, "Restore this receipt before editing it.")
+    item = await session.get(Item, item_id)
+    if item is None or item.receipt_id != receipt_id:
+        raise HTTPException(404, "item not found")
+    box = clamp_box(x - w / 2, y - h / 2, w, h)
+    for key, value in box.items():
+        setattr(item, key, value)
+    await session.commit()
+    event = {"type": "box", "item_id": item_id, **box}
+    from ..realtime import hub
+    await hub.broadcast(receipt_id, event)
+    return event
 
 
 @router.post("/r/{receipt_id}/ops")
