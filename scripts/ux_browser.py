@@ -104,6 +104,18 @@ def main():
             assert "You agreed" not in adam.find_element("id", "review").text
             print("token Undo restores assignment; confirmations reset: OK")
 
+            # Four quick taps in one go: each is one more of Nina's tokens (4 parts vs Adam's 1).
+            adam.find_element("css selector", '#tokenbar .token[data-user="Nina"]').click()
+            adam.execute_script("for (let i = 0; i < 4; i++) document.querySelector(arguments[0]).click()",
+                                f'[data-add="{first}"]')
+            count = lambda d: (holders(d, first, "Nina") or [None])[0]
+            wait(peer, lambda d: count(d) and count(d).get_attribute("data-count") == "4")
+            wait(adam, lambda d: "28,00 €" in d.find_element("id", "review").text)  # 8 € of the 10 € + 20 €
+            holders(adam, first, "Nina")[0].click()
+            wait(peer, lambda d: count(d) and count(d).get_attribute("data-count") == "3")
+            wait(peer, lambda d: "27,50 €" in d.find_element("id", "review").text)
+            print("repeat taps stack tokens, shares follow parts, a chip takes one off: OK")
+
             # Duplicate upload using the actual file chooser; choosing the photo submits it.
             photo = Path(data) / "duplicate.jpg"
             photo.write_bytes(image.getvalue())

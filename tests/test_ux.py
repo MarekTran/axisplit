@@ -145,3 +145,26 @@ async def test_tab_totals_distinguish_assigned_from_unassigned(client):
     assert "6,95 €" in page.text
     assert "not a payment or transfer balance" in page.text.lower()
     assert "owes / gets back" not in page.text
+
+
+async def test_extra_tokens_weight_the_split_and_come_off_one_at_a_time(client):
+    tab_id, receipt_id = await upload(client)
+    first, _ = await items_for(client, receipt_id)
+    for name in ("Marek", "Nina"):
+        await client.post(f"/t/{tab_id}/members", data={"username": name})
+    for name in ["Marek"] * 5 + ["Adam", "Nina"]:  # Marek had most of the 6,95 € tea
+        await op(client, receipt_id, "place", item_id=first.id, username=name)
+    review = await client.get(f"/r/{receipt_id}/review")
+    assert "4,97 €" in review.text and "0,99 €" in review.text
+    assert "×5" in review.text
+
+    await op(client, receipt_id, "unplace", item_id=first.id, username="Marek")
+    await op(client, receipt_id, "unplace", item_id=first.id, username="Marek")
+    await op(client, receipt_id, "unplace", item_id=first.id, username="Adam")
+    noop = await op(client, receipt_id, "unplace", item_id=first.id, username="Adam")
+    assert noop.status_code == 200
+    async with client.sessions() as session:
+        counts = {t.username: t.count for t in await session.scalars(select(TokenAssignment))}
+    assert counts == {"Marek": 3, "Nina": 1}
+    review = await client.get(f"/r/{receipt_id}/review")
+    assert "5,21 €" in review.text and "1,74 €" in review.text

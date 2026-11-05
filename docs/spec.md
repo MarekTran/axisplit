@@ -20,8 +20,9 @@ TabMember       (tab, username) + assigned color. Anyone in a tab may add anyone
 Receipt         an uploaded image inside a tab. uploaded_by, image file, status.
 Item            one OCR-detected line: label, price (integer cents), currency,
                 bbox (x,y,w,h normalized 0..1), ocr_confidence.
-TokenAssignment (item, username) — "this person consumed/owns this item".
-                Unique per (item, username). This is the entire split state.
+TokenAssignment (item, username, count) — "this person had count parts of
+                this item". One row per (item, username); anyone can add
+                anyone's token any number of times. This is the entire split state.
 Confirmation    (receipt, username, confirmed_at) — user agrees with final
                 token layout & prices of a receipt.
 ```
@@ -33,8 +34,9 @@ are flagged for review, never silently discarded. See `docs/ux.md`.
 
 
 Settlement is **pure derived data**: for each item, each token holder owes
-`price / n_holders` (remainder cents distributed deterministically by
-holder-sort order). Debts between users are minimized optionally (greedy
+`price × count / total_count` (leftover cents go to the largest remainders,
+ties by holder-sort order). One token each is an even split; 5 Marek + 1 Adam +
+1 Nina on 7,00 € Nachos is 5,00 / 1,00 / 1,00 €. Debts between users are minimized optionally (greedy
 matching); v1 shows the raw per-item ledger.
 
 ### Receipt status machine
@@ -74,10 +76,12 @@ PENDING_CONFIRM → SETTLED (all items assigned and all token holders confirmed)
 - Clients send semantic ops: `place {item, user}`, `unplace {item, user}`,
   `confirm {user}`, presence pings. Server validates (sender must be a tab
   member) and broadcasts the resulting state event to all peers.
-- Ops are add/remove on a set → **commutative & idempotent**. No CRDT needed;
-  server is authoritative, client applies optimistic update then reconciles
-  with broadcast (no-op if already applied). Ordering conflicts (place vs
-  remove of same token simultaneously) resolve last-write-wins at the server.
+- `place` adds one more of that person's tokens, `unplace` takes one off; the
+  server applies each as a single atomic UPDATE/DELETE, so the per-person
+  counters are **commutative** and concurrent taps never lose a count. No
+  CRDT needed; server is authoritative, client shows the new count
+  immediately, queues its ops in order, and reconciles with the server's
+  review once they settle. `unplace` at zero is a no-op.
 - Presence: `presence {user, viewing}` heartbeat every 15 s; UI shows avatars
   of who is in the room.
 - HTTP fallback (htmx POST) uses the same op handlers; WS is progressive
@@ -140,7 +144,9 @@ whatever space OCR models see. Backends MUST return boxes in that space.
   in v1.
 - **Interaction:** tap a member token, then **tap the photo** where the item is
   printed; client-side geometry snaps the token to the containing/nearest OCR
-  box (spec §5). Tap a pip to remove. True DnD deliberately avoided on touch —
+  box (spec §5). Tapping again adds another token (a bigger part); tap a pip
+  to take one off. The item list works the same way: a row adds the selected
+  person, a person's chip takes one of their tokens off. True DnD deliberately avoided on touch —
   tap-tap also works one-handed on a phone at a restaurant table.
 - **Inference:** models served behind LiteLLM proxy (OpenAI-compatible) or
   run locally from the bench harness.

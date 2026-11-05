@@ -47,9 +47,9 @@
           <span class="box-number">{{ loop.index }}</span>
           <span class="lbl">{{ item.label }} — {{ item.price_cents | eur }}</span>
           <span class="tokens">
-          {% for t in item.tokens %}
+          {% for t in item.tokens | sort(attribute='username') %}
             <button type="button" class="pip" data-user="{{ t.username }}" style="--c: {{ colors.get(t.username, '#888') }}"
-                    aria-label="Remove {{ t.username }} from {{ item.label }}" title="Remove {{ t.username }}"><span>{{ t.username[:1] }}</span></button>
+                    aria-label="Remove one of {{ t.username }}’s tokens from {{ item.label }}" title="Remove one of {{ t.username }}’s tokens"><span>{{ t.username[:1] }}</span>{% if t.count > 1 %}<b>{{ t.count }}</b>{% endif %}</button>
           {% endfor %}
           </span>
         </div>
@@ -69,5 +69,5 @@
 </div>
 <div id="board-feedback" class="feedback-toast" role="status" aria-live="polite" hidden><span></span><button type="button" id="undo-token" hidden>Undo</button></div>
 <script src="/static/hit-test.js?v=3" defer></script>
-<script src="/static/receipt.js?v=5" defer></script>
+<script src="/static/receipt.js?v=6" defer></script>
 {% endblock %}

@@ -287,6 +287,8 @@ dialog p { font-size: .93rem; }
 button.pip { --btn-bg: var(--c); --btn-hover: var(--c); --btn-fg: #fff; position: relative; width: 24px; height: 24px; min-height: 24px; padding: 0; border: 2px solid #fff;
   border-radius: 50%; font-size: .62rem; font-weight: 700; line-height: 1; text-transform: uppercase; text-shadow: 0 1px 1px rgb(0 0 0 / .3);
   box-shadow: 0 1px 4px rgb(0 0 0 / .4); pointer-events: auto; }
+.pip b { position: absolute; z-index: 1; top: -8px; right: -8px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 99px; background: #fff; color: #111;
+  font-size: .6rem; font-weight: 800; line-height: 16px; text-shadow: none; box-shadow: 0 1px 3px rgb(0 0 0 / .4); }
 .pip.flash { animation: flash .45s ease; }
 .drop-marker { position: absolute; z-index: 5; width: 16px; height: 16px; border-radius: 50%; background: var(--c); pointer-events: none; animation: fall .5s ease forwards; }
 .manual-entry { margin: .75rem 0 0; padding: 0; }
@@ -328,6 +330,7 @@ li.unassigned .item-jump { --btn-bg: var(--box-open); --btn-fg: var(--box-open-i
 .holder { --btn-bg: color-mix(in srgb, var(--c) 14%, var(--surface)); --btn-hover: color-mix(in srgb, var(--c) 22%, var(--surface)); --btn-fg: var(--text);
   --btn-border: color-mix(in srgb, var(--c) 45%, var(--surface)); gap: .35rem; min-height: 34px; padding: .15rem .65rem .15rem .2rem; border-radius: 999px; font-size: .84rem; font-weight: 550; }
 .holder .avatar { width: 24px; height: 24px; font-size: .66rem; }
+.holder .count { color: var(--text-2); font-weight: 750; font-variant-numeric: tabular-nums; }
 .holder::after { content: "−"; margin-left: .15rem; color: var(--text-3); font-weight: 600; }
 .unassigned-label { color: var(--warn); font-weight: 600; font-size: .82rem; }
 .confirmations .person > div { min-width: 0; }

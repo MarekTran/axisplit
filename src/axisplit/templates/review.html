@@ -9,9 +9,9 @@
       <button class="item-jump" type="button" data-jump="{{ item.id }}" aria-label="Find {{ item.label }} on the photo">{{ loop.index }}</button>
       <button class="item-add" type="button" data-add="{{ item.id }}"><strong>{{ item.label }}</strong><span class="amount">{{ item.price_cents | eur }}</span></button>
       <div class="holders">
-      {% for t in item.tokens %}
-        <button type="button" class="holder" data-item="{{ item.id }}" data-user="{{ t.username }}" style="--c: {{ colors.get(t.username, '#888') }}"
-                aria-label="Remove {{ t.username }} from {{ item.label }}"><span class="avatar" aria-hidden="true">{{ t.username[:1] }}</span>{{ t.username }}</button>
+      {% for t in item.tokens | sort(attribute='username') %}
+        <button type="button" class="holder" data-item="{{ item.id }}" data-user="{{ t.username }}" data-count="{{ t.count }}" style="--c: {{ colors.get(t.username, '#888') }}"
+                aria-label="Remove one of {{ t.username }}’s tokens from {{ item.label }}"><span class="avatar" aria-hidden="true">{{ t.username[:1] }}</span>{{ t.username }}{% if t.count > 1 %}<b class="count">×{{ t.count }}</b>{% endif %}</button>
       {% else %}<small class="unassigned-label">Nobody yet</small>{% endfor %}
       </div>
     </li>
