@@ -29,13 +29,16 @@
           set -euo pipefail
           # Keep model downloads in a user-owned cache (the system HF cache may
           # have been populated by root). -hf also fetches the vision projector.
+          # --cache-ram 0: llama.cpp's RAM prompt cache (8 GB by default) never hits for
+          # receipts (every photo differs) and only grows; Qwen3-VL-4B reached 8.4 GB without it.
           export HF_HOME="''${AXISPLIT_MODEL_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/axisplit-models}"
           mkdir -p "$HF_HOME"
           exec ${llama}/bin/llama-server \
             -hf "''${AXISPLIT_OCR_HF:-Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M}" \
             --host 127.0.0.1 --port "''${AXISPLIT_OCR_PORT:-8081}" \
             --ctx-size 8192 --parallel 1 --n-gpu-layers 99 \
-            --image-min-tokens 1024 "$@"
+            --image-min-tokens 1024 \
+            --cache-ram 0 "$@"
         '';
       in
       {
