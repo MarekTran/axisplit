@@ -1,21 +1,30 @@
-"""Local vision OCR: items and boxes against the EXIF-normalized image.
+"""Receipt OCR: items and boxes against the EXIF-normalized image.
 
-Qwen grounding coordinates are 0..1000; database boxes are 0..1.
-No fabricated boxes: malformed geometry fails extraction explicitly.
+Default backend: PaddleOCR (PP-OCRv6, CPU) reads the text lines, rules turn them into
+items, and a decision model picks which line is the total. The vision backend asks a
+local vision model instead (Qwen grounding coordinates are 0..1000).
+Database boxes are 0..1. No fabricated boxes: malformed geometry fails extraction explicitly.
 """
 
 import base64
 import io
+import logging
 import os
+import threading
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 import httpx
+import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field, model_validator
 
+from . import receipt_rules
 from .config import new_id
 from .models import Item
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -171,6 +180,108 @@ class LocalVisionBackend(Backend):
         return schema.model_validate_json(completion["message"]["content"])
 
 
+# The total question, worded as benchmarked: 17/19 right on unseen receipts with vllm-d3-nano.
+DECIDE_STATE = ("Text lines of a receipt photo, read by OCR from top to bottom. "
+                "Lines with an amount are labelled.")
+DECIDE_TOTAL = (
+    "Which labelled line holds the receipt's total: the final amount the customer pays for the "
+    "items on this receipt? Not a subtotal: when a subtotal is followed by discounts, the total is "
+    "the amount to pay after them. Not a VAT or tax line, savings, cash given or change. "
+    "A card-payment slip may be in the photo too (AMOUNT, TIP, TOTAL); its total includes the tip, "
+    "so it is not the receipt's total."
+)
+LETTERS = [chr(c) for c in range(65, 91)] + [chr(c) for c in range(97, 123)]  # A-Z, a-z
+
+
+class PaddleBackend(Backend):
+    """PP-OCRv6 on the CPU reads the text lines; rules turn them into items with boxes; a decision
+    model (llama.cpp's /v1/systemone) picks which line is the total. The total is what rules get
+    wrong most: VAT, subtotal, discount and card-slip lines all look like one."""
+    name = "paddle"
+
+    def __init__(self):
+        self._lock = threading.Lock()  # one OCR pass at a time: two in parallel are slower
+        self._engine = None
+        self._reads: dict = {}  # without a focus area, an upload's items and total share one read
+
+    def extract_items(self, image: Path, focus: Focus | None = None) -> list[ExtractedItem]:
+        lines, width, height = self._read(image, focus)
+        return [ExtractedItem(
+            label=i["label"][:120], price_cents=i["price_cents"],
+            x=i["bbox"][0], y=i["bbox"][1], w=i["bbox"][2] - i["bbox"][0], h=i["bbox"][3] - i["bbox"][1],
+        ) for i in receipt_rules.parse(lines, width, height)["items"]]
+
+    def extract_total(self, image: Path) -> int | None:
+        lines, width, height = self._read(image, None)  # whole photo: the total is outside the focus
+        rows = receipt_rules.amount_rows(lines, width, height)
+        candidates = [i for i, (_, value) in enumerate(rows) if value is not None and value > 0]
+        if not candidates:
+            return None
+        try:
+            return rows[self._pick_total(rows, candidates[-len(LETTERS):])][1]
+        except httpx.HTTPError as e:
+            logger.warning("Decision model unavailable (%s); taking the total from the rules", e)
+            return receipt_rules.parse(lines, width, height)["total_cents"]
+
+    def _pick_total(self, rows: list[tuple[str, int | None]], candidates: list[int]) -> int:
+        """Index of the row the decision model chooses as the total, from text only."""
+        letter = {i: LETTERS[k] for k, i in enumerate(candidates)}
+        text = "\n".join(f"{letter[i]}) {t}" if i in letter else f"   {t}" for i, (t, _) in enumerate(rows))
+        url = os.environ.get("AXISPLIT_DECIDE_URL", "http://127.0.0.1:8082/v1")
+        response = httpx.post(f"{url.rstrip('/')}/systemone", timeout=httpx.Timeout(60, connect=5), json={
+            "state": {"description": DECIDE_STATE, "receipt_lines": text},
+            "questions": {"total": {"type": "choice", "instructions": DECIDE_TOTAL,
+                                    "criteria": {letter[i]: rows[i][0][:80] for i in candidates}}},
+        })
+        response.raise_for_status()
+        choice = response.json()["answers"]["total"]["choice"]
+        return next(i for i, code in letter.items() if code == choice)
+
+    def _read(self, image: Path, focus: Focus | None) -> tuple[list, int, int]:
+        """Text lines as (text, quad in whole-photo pixels) inside the focus area, and the photo size."""
+        key = (image, image.stat().st_mtime_ns, focus)
+        with self._lock:
+            if key not in self._reads:
+                with Image.open(image) as im:
+                    rgb = im.convert("RGB")
+                width, height = rgb.size
+                fx, fy, fw, fh = focus or (0.0, 0.0, 1.0, 1.0)
+                x1, y1 = int(fx * width), int(fy * height)
+                x2, y2 = int((fx + fw) * width), int((fy + fh) * height)
+                result = self._ocr()(np.asarray(rgb)[y1:y2, x1:x2, ::-1].copy())  # BGR, as OpenCV
+                lines = [] if result.boxes is None else [
+                    (text, [[x + x1, y + y1] for x, y in box])
+                    for box, text in zip(result.boxes, result.txts)]
+                if len(self._reads) >= 4:
+                    self._reads.pop(next(iter(self._reads)))
+                self._reads[key] = (lines, width, height)
+            return self._reads[key]
+
+    def _ocr(self):
+        if self._engine is None:
+            from rapidocr import RapidOCR  # loads ONNX Runtime: only when this backend is used
+            from rapidocr.utils.typings import ModelType, OCRVersion
+            # First use downloads the models (31 MB) into the cache the flake's model servers use.
+            default = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "axisplit-models"
+            models = Path(os.environ.get("AXISPLIT_MODEL_CACHE", default)) / "rapidocr"
+            self._engine = RapidOCR(params={
+                "Det.ocr_version": OCRVersion.PPOCRV6, "Det.model_type": ModelType.SMALL,
+                "Rec.ocr_version": OCRVersion.PPOCRV6, "Rec.model_type": ModelType.SMALL,
+                "Det.limit_type": "max", "Det.limit_side_len": 1280,  # detect on at most 1280 px
+                "Global.log_level": "error", "Global.model_root_dir": str(models),
+                # One thread per physical core: all 16 SMT threads of a Ryzen 7800X3D read an
+                # upload in 1.5 s, its 8 cores in 0.95 s (same text).
+                "EngineConfig.onnxruntime.intra_op_num_threads": max(1, (os.cpu_count() or 2) // 2),
+            })
+        return self._engine
+
+
+@cache
+def paddle_backend() -> PaddleBackend:
+    """One per process: it holds the loaded OCR models."""
+    return PaddleBackend()
+
+
 _backend: Backend | None = None
 
 
@@ -182,9 +293,14 @@ def set_backend(backend: Backend) -> None:
 def get_backend() -> Backend:
     if _backend is not None:
         return _backend
-    if os.environ.get("AXISPLIT_OCR_BACKEND") == "stub":
+    choice = os.environ.get("AXISPLIT_OCR_BACKEND", "paddle")
+    if choice == "stub":
         return StubBackend()
-    return LocalVisionBackend()
+    if choice == "vision":
+        return LocalVisionBackend()
+    if choice == "paddle":
+        return paddle_backend()
+    raise ValueError(f"AXISPLIT_OCR_BACKEND={choice!r}: use paddle, vision or stub")
 
 
 def extract_items(image: Path, focus: Focus | None = None) -> list[ExtractedItem]:

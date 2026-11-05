@@ -11,6 +11,20 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         llama = pkgs.llama-cpp.override { vulkanSupport = pkgs.stdenv.hostPlatform.isLinux; };
+        # Decision model for the receipt total: answers /v1/systemone questions with
+        # probabilities in one pass. Its attention is non-causal, so a whole request must
+        # fit in one micro-batch (-ub). Text only (--no-mmproj): it reads the OCR lines.
+        # --cache-ram 0: the RAM prompt cache never hits, every receipt differs.
+        decideServer = pkgs.writeShellScriptBin "axisplit-decide" ''
+          set -euo pipefail
+          export HF_HOME="''${AXISPLIT_MODEL_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/axisplit-models}"
+          mkdir -p "$HF_HOME"
+          exec ${llama}/bin/llama-server \
+            -hf "''${AXISPLIT_DECIDE_HF:-ggml-org/vllm-d3-nano-GGUF:Q8_0}" --no-mmproj \
+            --host 127.0.0.1 --port "''${AXISPLIT_DECIDE_PORT:-8082}" \
+            --ctx-size 8192 -b 8192 -ub 8192 --parallel 1 --n-gpu-layers 99 \
+            --cache-ram 0 "$@"
+        '';
         ocrServer = pkgs.writeShellScriptBin "axisplit-ocr" ''
           set -euo pipefail
           # Keep model downloads in a user-owned cache (the system HF cache may
@@ -34,6 +48,7 @@
             curl
             jq
             ocrServer
+            decideServer
           ];
 
           # Let uv find libpg etc. if needed; keep a local pg data dir out of git.
@@ -41,7 +56,7 @@
 
           shellHook = ''
             echo "axisplit dev shell — typical flow:"
-            echo "  axisplit-ocr                                # local vision server on :8081"
+            echo "  axisplit-decide                             # decision model for totals on :8082"
             echo "  uv sync --all-extras                        # install deps into .venv"
             echo "  uv run uvicorn axisplit.main:app --reload   # http://localhost:8000"
             echo "  nix build .#postgres-init && ./result/bin/pg-dev   # local Postgres on :5433"
@@ -49,6 +64,7 @@
         };
 
         packages.ocr-server = ocrServer;
+        packages.decide-server = decideServer;
 
         packages.postgres-init = pkgs.writeShellScriptBin "pg-dev" ''
           set -euo pipefail

@@ -91,10 +91,21 @@ PENDING_CONFIRM → SETTLED (all items assigned and all token holders confirmed)
 
 Goal: from one crumpled receipt photo → `[{label, price_cents, currency, bbox}]`.
 
-**Current prototype:** Qwen3-VL-4B via a local llama.cpp server (Nix-packaged
-Vulkan backend), JSON-schema-constrained item/price/box extraction. Automatic
-on upload, retryable on empty receipts. Verified on one real receipt, not yet
-benchmarked for accuracy across the full dataset.
+**Current pipeline (`PaddleBackend`, the default):** PP-OCRv6 small through
+RapidOCR on the CPU reads the text lines and their quads. `receipt_rules` joins
+them into printed rows along the text's slope, finds the price column and returns
+items (label, line-total price, box). A decision model (vllm-d3-nano, 2.4B,
+Apache-2.0) served by llama.cpp's `/v1/systemone` picks which amount line is the
+total, from the OCR text alone. Automatic on upload, retryable on empty receipts.
+Benchmarked on 38 privately labelled receipts (rules tuned on 19, frozen, the
+other 19 scored once). On the unseen 19, with a focus area: 219 of 244 prices
+right and 1 extra item; totals right on 17 of 19 (rules alone 11; Qwen3-VL-4B
+reading the photo 18, at ~8 s each). About a second per upload: two OCR passes on
+an 8-core CPU, then 0.1 s on the GPU for the total.
+
+**Vision backend** (`AXISPLIT_OCR_BACKEND=vision`): Qwen3-VL-4B via a local
+llama.cpp server (Nix-packaged Vulkan backend), JSON-schema-constrained
+item/price/box extraction.
 
 **Candidates for further benchmarking** (see `/bench`):
 - Primary candidates: `dots.ocr` (native bbox+category+text JSON, MIT),
@@ -110,8 +121,8 @@ and `axisplit.ocr.extract_total(path) -> int | None`.
 
 **Focus area.** After choosing a photo, the uploader drags over the item lines and
 their prices (or picks "Use whole photo"). The area is stored on the receipt and
-trusted as drawn: OCR receives only that crop, upscaled so its longer side is 1600 px,
-so the grand total and other numbers can't be read as items, and returned boxes are
+trusted as drawn: OCR receives only that crop (the vision backend upscales it so its
+longer side is 1600 px), so the grand total and other numbers can't be read as items, and returned boxes are
 mapped back onto the whole photo. On the demo receipt with the local Qwen VLM this
 turned 2 wrong prices and drifting boxes (whole photo) into 7 correct prices with one
 box per line; one receipt, not a benchmark.
@@ -119,8 +130,11 @@ box per line; one receipt, not a benchmark.
 **Total cross-check.** A second, independent OCR call reads the printed grand total
 from the whole photo. The review shows whether the items add up to it, or how much
 is missing or too much, so a missed line or misread price is visible. A failed
-total read never blocks the items.
-The default is `LocalVisionBackend` at `http://127.0.0.1:8081/v1`.
+total read never blocks the items. With `PaddleBackend` the total pass is the
+whole-photo OCR plus one decision-model question; if the decision server is down,
+the rules' own total is used and a warning is logged.
+The default is `PaddleBackend` (decision server at `http://127.0.0.1:8082/v1`);
+`LocalVisionBackend` talks to `http://127.0.0.1:8081/v1`.
 `StubBackend` is only enabled explicitly with `AXISPLIT_OCR_BACKEND=stub` for
 UI tests. Inference errors are logged and shown as detection failures, never
 silently replaced by fake boxes. Qwen boxes in 0..1000 convert to normalized
