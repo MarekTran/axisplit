@@ -146,7 +146,7 @@ async def review_fragment(receipt_id: str, request: Request,
     ))
     return templates.TemplateResponse(request, "review.html", {
         "receipt": receipt, "items": items, "members": members, "who": member.username,
-        "summary": receipt_summary(items, confirmed),
+        "colors": {m.username: m.color for m in members}, "summary": receipt_summary(items, confirmed),
     })
 
 

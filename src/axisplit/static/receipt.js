@@ -38,8 +38,9 @@
       token.setAttribute("aria-pressed", String(active));
     }
     document.getElementById("selection-hint").textContent = selected
-      ? `Placing ${selected}’s token · tap what they had`
+      ? `Tap what ${selected} had`
       : "Choose a person, then tap what they had.";
+    board.style.setProperty("--sel-c", colors[selected] || ""); // Tints the "+" on every item row.
   }
   tokenbar.addEventListener("click", (event) => {
     const token = event.target.closest(".token");
@@ -64,27 +65,30 @@
     box.classList.add("hit");
     setTimeout(() => box.classList.remove("hit"), 1500);
   }
+  function place(itemId) {
+    if (!who) { feedback("Choose your name before placing tokens."); return; }
+    if (!selected) { feedback("Choose a person above first."); return; }
+    send({ op: "place", item_id: itemId, username: selected });
+  }
   imgwrap.addEventListener("click", (event) => {
     const pip = event.target.closest("button.pip");
     if (pip) {
       send({ op: "unplace", item_id: pip.closest(".box").dataset.item, username: pip.dataset.user });
       return;
     }
-    if (!who) { feedback("Choose your name before placing tokens."); return; }
-    if (!selected) { feedback("Choose a person above first."); return; }
     const target = resolveItem(event.clientX, event.clientY);
     if (!target) { feedback("Detect the receipt first, or add a missing item below."); return; }
-    highlight(target.el);
-    send({ op: "place", item_id: target.id, username: selected });
+    if (who && selected) highlight(target.el);
+    place(target.id);
   });
 
   // Delegation survives SSR review-fragment replacements.
   board.addEventListener("click", (event) => {
-    const toggle = event.target.closest(".person-toggle");
-    if (toggle) send({
-      op: toggle.getAttribute("aria-pressed") === "true" ? "unplace" : "place",
-      item_id: toggle.dataset.item, username: toggle.dataset.user,
-    });
+    // List rows mirror the photo: a row adds the selected person, a holder chip takes theirs off.
+    const add = event.target.closest("[data-add]");
+    if (add) place(add.dataset.add);
+    const holder = event.target.closest(".holder");
+    if (holder) send({ op: "unplace", item_id: holder.dataset.item, username: holder.dataset.user });
     const confirm = event.target.closest("[data-confirm]");
     if (confirm && !confirm.disabled) send({ op: confirm.dataset.confirm });
     const jump = event.target.closest("[data-jump]");
@@ -95,7 +99,7 @@
   });
 
   function itemLabel(id) {
-    return board.querySelector(`.item-review li[data-item="${id}"] .item-heading > strong`)?.textContent || "item";
+    return board.querySelector(`.item-review li[data-item="${id}"] .item-add > strong`)?.textContent || "item";
   }
   async function send(op, allowUndo = true) {
     if (!who) { location.href = `/claim?next=${encodeURIComponent(location.pathname)}`; return; }
@@ -117,7 +121,8 @@
       if (op.op === "place" || op.op === "unplace") {
         const changed = op.op === "place" ? !hadToken : hadToken;
         const inverse = allowUndo && changed ? { ...op, op: op.op === "place" ? "unplace" : "place" } : null;
-        feedback(`${op.username} ${op.op === "place" ? "added to" : "removed from"} ${label}. Saved.`, inverse);
+        feedback(changed ? `${op.username} ${op.op === "place" ? "added to" : "removed from"} ${label}. Saved.`
+          : `${op.username} is already on ${label}.`, inverse);
       } else {
         feedback(op.op === "confirm" ? "Your confirmation is saved. Others can now check their shares." : "Your confirmation was withdrawn.");
       }
@@ -143,12 +148,13 @@
       // Preserve keyboard focus when a control is replaced by server-rendered HTML.
       const active = document.activeElement;
       const focus = active?.closest("#review") ? {
-        item: active.dataset.item, user: active.dataset.user, confirm: active.dataset.confirm,
+        item: active.dataset.item, user: active.dataset.user, confirm: active.dataset.confirm, add: active.dataset.add,
       } : null;
       document.getElementById("review").replaceWith(next);
       if (focus) {
-        const replacement = [...next.querySelectorAll("button")].find(button => focus.confirm
-          ? button.dataset.confirm : button.dataset.item === focus.item && button.dataset.user === focus.user);
+        const replacement = [...next.querySelectorAll("button")].find(button => focus.confirm ? button.dataset.confirm
+          : focus.add ? button.dataset.add === focus.add
+          : button.dataset.item === focus.item && button.dataset.user === focus.user);
         replacement?.focus({ preventScroll: true });
       }
       const status = document.getElementById("status");
@@ -159,8 +165,7 @@
   }
   function syncBoxTokens() {
     for (const box of imgwrap.querySelectorAll(".box")) {
-      const holders = [...board.querySelectorAll(`.person-toggle[data-item="${box.dataset.item}"]`)]
-        .filter(button => button.getAttribute("aria-pressed") === "true");
+      const holders = [...board.querySelectorAll(`.holder[data-item="${box.dataset.item}"]`)];
       const tokens = box.querySelector(".tokens");
       tokens.replaceChildren();
       for (const holder of holders) {
@@ -178,9 +183,14 @@
       box.classList.toggle("assigned", holders.length > 0);
     }
   }
+  function presence(state, text) {
+    const el = document.getElementById("presence");
+    el.dataset.state = state; // Styles the status dot; the text stays the accessible signal.
+    el.textContent = text;
+  }
   function liveEvent(event) {
     if (event.type === "presence") {
-      document.getElementById("presence").textContent = `Live · ${event.online} online`;
+      presence("live", `Live · ${event.online} online`);
     } else if (event.type === "removed") {
       location.href = `/t/${board.dataset.tab}?removed=${rid}`;
     } else if (event.type === "error") {
@@ -194,10 +204,10 @@
     if (!who || closing) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/ws/receipts/${rid}?u=${encodeURIComponent(who)}`);
-    ws.onopen = () => { document.getElementById("presence").textContent = "Live updates connected"; refreshReview(); };
+    ws.onopen = () => { presence("live", "Live updates connected"); refreshReview(); };
     ws.onmessage = (event) => liveEvent(JSON.parse(event.data));
     ws.onclose = () => {
-      document.getElementById("presence").textContent = "Live updates offline · edits still save";
+      presence("offline", "Live updates offline · edits still save");
       if (!closing) setTimeout(connect, 2000);
     };
     ws.onerror = () => ws.close();

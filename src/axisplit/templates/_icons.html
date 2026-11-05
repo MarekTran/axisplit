@@ -1,0 +1,2 @@
+{# Decorative icons from the static sprite; visible text or aria-labels carry the meaning. #}
+{% macro icon(name) %}<svg class="icon" aria-hidden="true" focusable="false"><use href="/static/icons.svg?v=5#{{ name }}"></use></svg>{% endmacro %}

@@ -1,11 +1,14 @@
 {% extends "base.html" %}
+{% block main_class %}narrow{% endblock %}
 {% block content %}
-<h1>Who are you?</h1>
-<p class="muted">v1 identity is just a username. Anyone with the tab link who types
-your name *is* you — invite friends only from people you trust.</p>
-<form method="post" action="/claim">
-  <input type="hidden" name="next" value="{{ next }}">
-  <input name="username" placeholder="username" required maxlength="32" autofocus>
-  <button>Claim</button>
-</form>
+<section class="panel">
+  <h1>Your name</h1>
+  <p class="muted">The group sees your tokens and share under this name.</p>
+  <form method="post" action="/claim" class="stack">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>Name<input name="username" placeholder="e.g. Adam" required maxlength="32" autofocus autocomplete="nickname"></label>
+    <button class="large">Continue</button>
+  </form>
+  <p class="muted"><small>No passwords: anyone with the tab link who types your name acts as you.</small></p>
+</section>
 {% endblock %}
