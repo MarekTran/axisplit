@@ -2,11 +2,11 @@
   "image": "../../../test_photos/u78-VYhI.jpg",
   "currency": "EUR",
   "items": [
-    {"label": "AYCE DO - ZO", "price_cents": 12450, "bbox": [0.234, 0.324, 0.717, 0.365]},
-    {"label": "Mala Chili mix", "price_cents": 100, "bbox": [0.234, 0.38, 0.722, 0.399]},
-    {"label": "Homemade Mango Tea", "price_cents": 695, "bbox": [0.234, 0.412, 0.728, 0.431]},
-    {"label": "Homemade Watermelon Tea", "price_cents": 695, "bbox": [0.234, 0.431, 0.732, 0.457]},
-    {"label": "Espresso Martini", "price_cents": 1450, "bbox": [0.234, 0.477, 0.737, 0.498]}
+    {"label": "AYCE DO - ZO", "price_cents": 12450, "bbox": [0.234, 0.324, 0.717, 0.365], "quad": [[0.234, 0.3348], [0.717, 0.3235], [0.717, 0.3513], [0.234, 0.3626]]},
+    {"label": "Mala Chili mix", "price_cents": 100, "bbox": [0.234, 0.38, 0.722, 0.399], "quad": [[0.234, 0.3858], [0.722, 0.3756], [0.722, 0.3844], [0.234, 0.3946]]},
+    {"label": "Homemade Mango Tea", "price_cents": 695, "bbox": [0.234, 0.412, 0.728, 0.431], "quad": [[0.234, 0.4215], [0.728, 0.4124], [0.728, 0.4207], [0.234, 0.4298]]},
+    {"label": "Homemade Watermelon Tea", "price_cents": 695, "bbox": [0.234, 0.431, 0.732, 0.457], "quad": [[0.234, 0.4344], [0.732, 0.4261], [0.732, 0.448], [0.234, 0.4564]]},
+    {"label": "Espresso Martini", "price_cents": 1450, "bbox": [0.234, 0.477, 0.737, 0.498], "quad": [[0.234, 0.4846], [0.737, 0.4778], [0.737, 0.4865], [0.234, 0.4934]]}
   ],
-  "total": {"label": "TOTAL", "price_cents": 15390, "bbox": [0.236, 0.574, 0.747, 0.594]}
+  "total": {"label": "TOTAL", "price_cents": 15390, "bbox": [0.236, 0.574, 0.747, 0.594], "quad": [[0.236, 0.5768], [0.747, 0.5748], [0.747, 0.588], [0.236, 0.59]]}
 }

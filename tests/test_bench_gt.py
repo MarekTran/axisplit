@@ -17,6 +17,9 @@ def test_case_is_consistent(case):
     for e in entries:
         x1, y1, x2, y2 = e["bbox"]
         assert 0 <= x1 < x2 <= 1 and 0 <= y1 < y2 <= 1, e
+        (tlx, tly), (trx, try_), (brx, bry), (blx, bly) = e["quad"]  # TL, TR, BR, BL
+        assert all(0 <= c <= 1 for point in e["quad"] for c in point), e
+        assert tlx < trx and blx < brx and tly < bly and try_ < bry, e  # ordered, not flipped
     assert all(e["price_cents"] >= 0 for e in gt["items"])
     assert all(e["price_cents"] < 0 for e in gt.get("discounts", []))
     assert sum(e["price_cents"] for e in gt["items"] + gt.get("discounts", [])) == gt["total"]["price_cents"]

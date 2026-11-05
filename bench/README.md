@@ -36,6 +36,10 @@ Prices are the **line total** (Beer x2 at 2€ -> 400).
 
 Optional fields, used by the labelled `test_photos` cases:
 
+- `quad`: the same item as 4 normalized points `[[x, y] TL, TR, BR, BL]` that follow the
+  printed text's slope, so tilted and curled receipts don't overlap their neighbours.
+  `bbox` stays the axis-aligned extent, for scoring against rectangle predictions.
+
 - `image` may point outside the case dir (`../../../test_photos/<id>.jpg`);
   `run.py` uses it when the file exists.
 - `total`: the printed grand total, `{label, price_cents, bbox}`, plus `note`
@@ -50,9 +54,12 @@ Optional fields, used by the labelled `test_photos` cases:
 Each item box spans everything printed for that item: the name, a wrapped
 name, a quantity/unit-price line and the line total. Category headings and
 column headers are not items; add-ons with their own price (`* Cheese 1,50`)
-and bottle deposits (`PET obal záloha`) are. Boxes are axis-aligned, so on
-tilted or curled receipts they overlap their neighbours. Labels are the item
-name as printed, without the quantity prefix or unit price.
+and bottle deposits (`PET obal záloha`) are. Labels are the item name as printed,
+without the quantity prefix or unit price.
+
+Quads use the text slope read off each photo (name vs. price heights), per height
+on the page, so a curl gets a different slope per line; each quad is then trimmed
+to its line's ink. The photos are never transformed.
 
 | case | receipt | items | total |
 |---|---|---|---|
