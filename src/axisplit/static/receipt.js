@@ -14,7 +14,8 @@
   let reviewTimer;
   let feedbackTimer;
   let undo;
-  const pending = new Set();
+  let saving = 0; // Edits in flight. The review is refreshed once they have all settled.
+  let queue = Promise.resolve();
 
   function feedback(message, undoAction = null) {
     const toast = document.getElementById("board-feedback");
@@ -101,16 +102,26 @@
   function itemLabel(id) {
     return board.querySelector(`.item-review li[data-item="${id}"] .item-add > strong`)?.textContent || "item";
   }
-  async function send(op, allowUndo = true) {
+  // Edits queue up in order, so tapping an item five times places five tokens.
+  function send(op, allowUndo = true) {
     if (!who) { location.href = `/claim?next=${encodeURIComponent(location.pathname)}`; return; }
-    const key = `${op.op}:${op.item_id || ""}:${op.username || ""}`;
-    if (pending.has(key)) return;
-    pending.add(key);
+    let message = null;
+    if (op.op === "place" || op.op === "unplace") {
+      const counts = tokenCounts(op.item_id);
+      const count = (counts.get(op.username) || 0) + (op.op === "place" ? 1 : -1);
+      if (count < 0) return;
+      counts.set(op.username, count);
+      renderTokens(op.item_id, counts); // Show the new count right away; the server's review replaces it.
+      const label = itemLabel(op.item_id);
+      message = !count ? `${op.username} removed from ${label}. Saved.`
+        : count === 1 && op.op === "place" ? `${op.username} added to ${label}. Saved.`
+        : `${op.username} ×${count} on ${label}. Saved.`;
+    }
     feedback("Saving…");
-    const label = itemLabel(op.item_id);
-    // Remember whether this is a true change (placing an existing token is a no-op).
-    const box = op.item_id && imgwrap.querySelector(`.box[data-item="${op.item_id}"]`);
-    const hadToken = box && [...box.querySelectorAll(".pip")].some(p => p.dataset.user === op.username);
+    saving++;
+    queue = queue.then(() => save(op, message, allowUndo)).finally(() => { if (!--saving) refreshReview(); });
+  }
+  async function save(op, message, allowUndo) {
     try {
       const response = await fetch(`/r/${rid}/ops`, {
         method: "POST", headers: { "content-type": "application/json" },
@@ -118,19 +129,13 @@
       });
       const event = await response.json();
       if (!response.ok) throw new Error(event.detail || "Couldn’t save. Please try again.");
-      if (op.op === "place" || op.op === "unplace") {
-        const changed = op.op === "place" ? !hadToken : hadToken;
-        const inverse = allowUndo && changed ? { ...op, op: op.op === "place" ? "unplace" : "place" } : null;
-        feedback(changed ? `${op.username} ${op.op === "place" ? "added to" : "removed from"} ${label}. Saved.`
-          : `${op.username} is already on ${label}.`, inverse);
+      if (message) {
+        feedback(message, allowUndo ? { ...op, op: op.op === "place" ? "unplace" : "place" } : null);
       } else {
         feedback(op.op === "confirm" ? "Your confirmation is saved. Others can now check their shares." : "Your confirmation was withdrawn.");
       }
-      await refreshReview();
     } catch (error) {
       feedback(error.message || "Connection lost. Your change wasn’t confirmed; please retry.");
-    } finally {
-      pending.delete(key);
     }
   }
 
@@ -143,7 +148,7 @@
       if (response.status === 410) { location.href = `/t/${board.dataset.tab}?removed=${rid}`; return; }
       if (!response.ok) throw new Error("Couldn’t refresh shares. Reload to check the latest split.");
       const html = await response.text();
-      if (version !== reviewVersion) return;
+      if (version !== reviewVersion || saving) return; // Newer taps are showing; refresh again after them.
       const next = new DOMParser().parseFromString(html, "text/html").getElementById("review");
       // Preserve keyboard focus when a control is replaced by server-rendered HTML.
       const active = document.activeElement;
@@ -163,25 +168,58 @@
       syncBoxTokens();
     } catch (error) { feedback(error.message); }
   }
+  // Same order and markup as review.html and receipt.html: sorted by name, count shown from 2 up.
+  function tokenCounts(itemId) {
+    return new Map([...board.querySelectorAll(`.holder[data-item="${itemId}"]`)]
+      .map(holder => [holder.dataset.user, Number(holder.dataset.count)]));
+  }
+  function byName([a], [b]) {
+    const x = a.toLowerCase(), y = b.toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  function tokenButton(className, user, label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    button.dataset.user = user;
+    button.style.setProperty("--c", colors[user] || "#888");
+    button.setAttribute("aria-label", `Remove one of ${user}’s tokens from ${label}`);
+    button.append(Object.assign(document.createElement("span"), { textContent: user.slice(0, 1) }));
+    return button;
+  }
+  function renderPips(itemId, counts) {
+    const box = imgwrap.querySelector(`.box[data-item="${itemId}"]`);
+    if (!box) return;
+    const label = itemLabel(itemId);
+    const placed = [...counts].filter(([, n]) => n > 0).sort(byName);
+    box.querySelector(".tokens").replaceChildren(...placed.map(([user, n]) => {
+      const pip = tokenButton("pip", user, label);
+      pip.title = `Remove one of ${user}’s tokens`;
+      if (n > 1) pip.append(Object.assign(document.createElement("b"), { textContent: n }));
+      return pip;
+    }));
+    box.classList.toggle("assigned", placed.length > 0);
+  }
+  function renderTokens(itemId, counts) {
+    renderPips(itemId, counts);
+    const row = board.querySelector(`.item-review li[data-item="${itemId}"]`);
+    const label = itemLabel(itemId);
+    const placed = [...counts].filter(([, n]) => n > 0).sort(byName);
+    const chips = placed.map(([user, n]) => {
+      const chip = tokenButton("holder", user, label);
+      Object.assign(chip.dataset, { item: itemId, count: n });
+      Object.assign(chip.firstChild, { className: "avatar" }).setAttribute("aria-hidden", "true");
+      chip.append(user);
+      if (n > 1) chip.append(Object.assign(document.createElement("b"), { className: "count", textContent: `×${n}` }));
+      return chip;
+    });
+    row.querySelector(".holders").replaceChildren(...(chips.length ? chips
+      : [Object.assign(document.createElement("small"), { className: "unassigned-label", textContent: "Nobody yet" })]));
+    row.classList.toggle("assigned", placed.length > 0);
+    row.classList.toggle("unassigned", !placed.length);
+  }
   function syncBoxTokens() {
-    for (const box of imgwrap.querySelectorAll(".box")) {
-      const holders = [...board.querySelectorAll(`.holder[data-item="${box.dataset.item}"]`)];
-      const tokens = box.querySelector(".tokens");
-      tokens.replaceChildren();
-      for (const holder of holders) {
-        const user = holder.dataset.user;
-        const pip = document.createElement("button");
-        pip.type = "button";
-        pip.className = "pip";
-        pip.dataset.user = user;
-        pip.style.setProperty("--c", colors[user] || "#888");
-        pip.textContent = user.slice(0, 1);
-        pip.setAttribute("aria-label", `Remove ${user} from ${itemLabel(box.dataset.item)}`);
-        pip.title = `Remove ${user}`;
-        tokens.append(pip);
-      }
-      box.classList.toggle("assigned", holders.length > 0);
-    }
+    for (const box of imgwrap.querySelectorAll(".box")) renderPips(box.dataset.item, tokenCounts(box.dataset.item));
   }
   function presence(state, text) {
     const el = document.getElementById("presence");
@@ -195,7 +233,7 @@
       location.href = `/t/${board.dataset.tab}?removed=${rid}`;
     } else if (event.type === "error") {
       feedback(event.detail || "That change couldn’t be saved.");
-    } else {
+    } else if (!saving) { // Our own queued edits refresh once they settle.
       clearTimeout(reviewTimer);
       reviewTimer = setTimeout(refreshReview, 80);
     }

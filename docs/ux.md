@@ -36,5 +36,5 @@ The receipt list controls provide larger targets than the overlay tokens.
   removal/restore, authorization and honest totals. Temporary DB and upload dir.
 - `node --test tests/hit-test.test.cjs`: adjacent OCR boxes at multiple image sizes.
 - `scripts/ux_browser.py`: two actual Firefox sessions verify live assignment,
-  agreement, token Undo, duplicate upload and removal/restore. Uses an isolated
+  agreement, token Undo, repeat-tap token counts, duplicate upload and removal/restore. Uses an isolated
   temporary database; never the running server's receipts.

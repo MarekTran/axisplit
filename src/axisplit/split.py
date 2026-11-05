@@ -15,17 +15,17 @@ class Share:
 
 
 def split_item(item: Item) -> list[Share]:
-    """Split item price evenly among token holders; extra cents go to the
-    alphabetically-first holders (deterministic)."""
-    holders = sorted(t.username for t in item.tokens)
-    if not holders:
+    """Split item price in proportion to each holder's token count. Leftover
+    cents go to the largest remainders, ties to the alphabetically-first holder
+    (deterministic). With one token each this is an even split."""
+    tokens = sorted(item.tokens, key=lambda t: t.username)
+    parts = sum(t.count for t in tokens)
+    if not parts:
         return []
-    n = len(holders)
-    base, rem = divmod(item.price_cents, n)
-    return [
-        Share(h, item.id, item.label, base + (1 if i < rem else 0))
-        for i, h in enumerate(holders)
-    ]
+    exact = {t.username: divmod(item.price_cents * t.count, parts) for t in tokens}
+    leftover = item.price_cents - sum(cents for cents, _ in exact.values())
+    bonus = set(sorted(exact, key=lambda u: -exact[u][1])[:leftover])  # stable sort keeps name order on ties
+    return [Share(t.username, item.id, item.label, exact[t.username][0] + (t.username in bonus)) for t in tokens]
 
 
 def tab_balances(items: list[Item], payer: str) -> dict[str, int]:

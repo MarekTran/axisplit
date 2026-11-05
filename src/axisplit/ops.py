@@ -2,7 +2,7 @@
 paths. Each op returns a broadcast event dict; status is recomputed."""
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -63,16 +63,21 @@ async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -
         item = await session.get(Item, item_id)
         if item is None or item.receipt_id != receipt_id:
             raise HTTPException(404, "item not found")
-        existing = await session.get(TokenAssignment, (item_id, target))
-        if kind == "place" and existing is None:
-            session.add(TokenAssignment(item_id=item_id, username=target))
-            await session.commit()
-        elif kind == "unplace" and existing is not None:
-            await session.delete(existing)
-            await session.commit()
+        # place adds one more of target's tokens, unplace takes one off. Single UPDATE/DELETE
+        # statements, so rapid taps from several phones can't lose a count.
+        match = (TokenAssignment.item_id == item_id, TokenAssignment.username == target)
+        if kind == "place":
+            added = await session.execute(
+                update(TokenAssignment).where(*match).values(count=TokenAssignment.count + 1))
+            if not added.rowcount:
+                session.add(TokenAssignment(item_id=item_id, username=target))
         else:
-            return {"type": kind, "item_id": item_id, "username": target,
-                    "status": receipt.status}  # no-op: don't disturb confirmations
+            taken = await session.execute(update(TokenAssignment).where(
+                *match, TokenAssignment.count > 1).values(count=TokenAssignment.count - 1))
+            if not taken.rowcount and not (await session.execute(delete(TokenAssignment).where(*match))).rowcount:
+                return {"type": kind, "item_id": item_id, "username": target,
+                        "status": receipt.status}  # no-op: don't disturb confirmations
+        await session.commit()
         # spec §3: moving tokens invalidates previous confirmations
         for c in await session.scalars(select(Confirmation).where(Confirmation.receipt_id == receipt_id)):
             await session.delete(c)

@@ -1,6 +1,6 @@
 """Per-receipt WebSocket rooms. Server is authoritative; clients send ops and
-receive broadcast events. Token ops are add/remove on a set => commutative
-and idempotent, so no CRDT is needed (spec §4)."""
+receive broadcast events. Token ops are +1/-1 on a per-person counter =>
+commutative, so no CRDT is needed (spec §4)."""
 
 import json
 

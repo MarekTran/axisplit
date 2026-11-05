@@ -84,6 +84,8 @@ class TokenAssignment(Base):
     __table_args__ = (UniqueConstraint("item_id", "username"),)
     item_id: Mapped[str] = mapped_column(ForeignKey("items.id"), primary_key=True)
     username: Mapped[str] = mapped_column(String, primary_key=True)
+    # How many of this person's tokens sit on the item; their part of its price is count / total.
+    count: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
 
 class Confirmation(Base):
