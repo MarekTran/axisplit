@@ -319,7 +319,23 @@ button.pip { --btn-bg: var(--c); --btn-hover: var(--c); --btn-fg: #fff; position
 .manual-price input { text-align: right; font-variant-numeric: tabular-nums; }
 /* Drawing a box: drags draw instead of scrolling, and taps don't place tokens. */
 .imgwrap.drawing { touch-action: none; cursor: crosshair; }
-.box.draft { z-index: 4; border: 2px solid var(--box-hit); background: rgb(79 143 232 / .22); box-shadow: 0 0 0 3px rgb(79 143 232 / .35); }
+.box.draft { z-index: 4; border: 2px solid var(--box-hit); background: rgb(79 143 232 / .22); box-shadow: 0 0 0 3px rgb(79 143 232 / .35); cursor: move; }
+.box.editing { visibility: hidden; }  /* its draft stands in while it's adjusted */
+/* Small dots on the draft's corners, with an invisible ring that makes them a 44px touch target. */
+.corner-handle { position: absolute; width: 16px; height: 16px; margin: -9px 0 0 -9px; border: 2px solid var(--box-hit); border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .6); pointer-events: auto; cursor: nwse-resize; }
+.corner-handle::before { content: ""; position: absolute; inset: -16px; border-radius: 50%; }
+.corner-handle[data-corner="0"] { left: 0; top: 0; }
+.corner-handle[data-corner="1"] { left: 100%; top: 0; cursor: nesw-resize; }
+.corner-handle[data-corner="2"] { left: 100%; top: 100%; }
+.corner-handle[data-corner="3"] { left: 0; top: 100%; cursor: nesw-resize; }
+/* While a box is edited: what to do, Cancel and Save, kept on screen under a long photo. */
+.box-editor-bar { position: sticky; bottom: env(safe-area-inset-bottom); z-index: 20; display: flex; align-items: center; gap: .5rem;
+  margin-top: .5rem; padding: .45rem .45rem .45rem .9rem; border-radius: 14px; background: rgb(15 23 20 / .94); color: #eef4f1;
+  font-size: .88rem; box-shadow: 0 12px 32px -12px rgb(0 0 0 / .5); }
+.box-editor-bar > span { flex: 1; min-width: 0; }
+.box-editor-bar button { flex: none; min-height: 40px; }
+.box-editor-bar .text-button { --btn-fg: #8ff0c4; --btn-hover: rgb(255 255 255 / .12); }
 .total-check { margin: -.25rem 0 .75rem; color: var(--success); font-size: .86rem; font-weight: 600; }
 .notice.total-check { margin-top: 0; color: var(--text); font-weight: 400; }
 #quickadd { position: absolute; z-index: 6; width: min(85%, 300px); padding: .65rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow); cursor: auto; }

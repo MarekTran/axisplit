@@ -57,7 +57,7 @@
 
   function resolveItem(clientX, clientY) {
     const image = imgwrap.querySelector("img").getBoundingClientRect();
-    const items = [...imgwrap.querySelectorAll(".box")].map((el) => ({
+    const items = [...imgwrap.querySelectorAll(".box[data-item]")].map((el) => ({  // not the draft
       id: el.dataset.item, el,
       x: parseFloat(el.style.left) / 100 * image.width,
       y: parseFloat(el.style.top) / 100 * image.height,
@@ -108,7 +108,7 @@
         box.scrollIntoView({ block: "center", behavior: "smooth" });
         highlight(box);
         const label = itemLabel(jump.dataset.jump);
-        feedback(`${label}: box in the wrong spot?`, () => startDrawing({ itemId: jump.dataset.jump, label }), "Redraw");
+        feedback(`${label}: box in the wrong spot?`, () => startDrawing({ itemId: jump.dataset.jump, label }), "Fix box");
       }
     }
   });
@@ -260,46 +260,70 @@
   }
   syncBoxTokens();  // Spreads out pips the server placed on top of each other.
   // Drawing a box on the photo: for a missing item (while "Add a missing item" is open), or to
-  // move an item's box where it is really printed.
+  // move an item's box where it is really printed. Either way the box can be adjusted (corners,
+  // moving it) until it is saved; the bar under the photo says how and holds Save and Cancel.
   let drawing = null;  // { itemId, label } when redrawing, {} when adding a missing item
   let drewAt = 0;
-  const draft = Object.assign(document.createElement("div"), { className: "box draft", hidden: true });
-  imgwrap.querySelector(".photo").append(draft);  // Boxes are placed in % of the whole photo.
   const manual = document.getElementById("manual-entry");
+  const bar = document.getElementById("box-editor");
+  const editor = boxEditor(imgwrap, imgwrap.querySelector("img"), imgwrap.querySelector(".photo"), () => drawing, (rect, done) => {
+    if (done) drewAt = Date.now();
+    paintBar();
+    if (drawing.itemId) return;  // Saved with the bar's button.
+    const form = manual.querySelector("form");
+    for (const [key, value] of Object.entries(center(rect))) {
+      Object.assign(form.elements[key], { value: value.toFixed(4), disabled: false });
+    }
+  });
+  const center = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2, w: r.w, h: r.h });
+  function paintBar() {
+    const has = Boolean(editor.get());
+    bar.querySelector("span").textContent = !has
+      ? (drawing.itemId ? `Drag over ${drawing.label} on the photo.` : "Drag across the missing line on the photo.")
+      : "Drag a corner to resize, or the box to move.";
+    const done = bar.querySelector('[data-editor="done"]');
+    done.textContent = drawing.itemId ? "Save box" : "Name it";
+    done.hidden = !has;
+  }
   function startDrawing(mode) {
+    stopDrawing();
     drawing = mode;
     imgwrap.classList.add("drawing");
-    document.getElementById("selection-hint").textContent = mode.itemId
-      ? `Drag over ${mode.label}` : "Drag over the missing line";
-    if (mode.itemId) feedback(`Drag over ${mode.label} on the photo.`, stopDrawing, "Cancel");
+    document.getElementById("board-feedback").hidden = true;  // The bar takes its place.
+    document.getElementById("selection-hint").textContent = mode.itemId ? `Adjust ${mode.label}’s box` : "Mark the missing line";
+    const box = mode.itemId && imgwrap.querySelector(`.box[data-item="${mode.itemId}"]`);
+    if (box) {  // Start from where the box is now; the original hides while it's edited.
+      box.classList.add("editing");
+      editor.set(Object.fromEntries(["left", "top", "width", "height"].map((k, i) => ["xywh"[i], parseFloat(box.style[k]) / 100])));
+    }
+    bar.hidden = false;
+    paintBar();
   }
   function stopDrawing() {
+    if (!drawing) return;
     drawing = null;
     imgwrap.classList.remove("drawing");
-    draft.hidden = true;
+    imgwrap.querySelector(".box.editing")?.classList.remove("editing");
+    editor.set(null);
+    bar.hidden = true;
     paintSelection();
   }
   manual?.addEventListener("toggle", () => (manual.open ? startDrawing({}) : stopDrawing()));
-  dragRect(imgwrap, imgwrap.querySelector("img"), () => drawing, (rect, done) => {
-    if (done && rect.w < 0.02 && rect.h < 0.02) {  // A tap: a line-sized box centered on it.
-      rect = { x: rect.x - 0.3, y: rect.y - 0.025, w: 0.6, h: 0.05 };
-    }
-    draft.hidden = false;
-    placeRect(draft, rect);
-    if (!done) return;
-    drewAt = Date.now();
-    const center = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2, w: rect.w, h: rect.h };
+  bar.querySelector('[data-editor="cancel"]').addEventListener("click", () => {
+    if (drawing && !drawing.itemId) manual.open = false;  // Its toggle stops drawing.
+    else stopDrawing();
+  });
+  bar.querySelector('[data-editor="done"]').addEventListener("click", () => {
+    const rect = editor.get();
+    if (!rect) return;
     if (drawing.itemId) {
-      saveBox(drawing.itemId, center);
+      saveBox(drawing.itemId, center(rect));
       stopDrawing();
       return;
     }
     const form = manual.querySelector("form");
-    for (const [key, value] of Object.entries(center)) {
-      Object.assign(form.elements[key], { value: value.toFixed(4), disabled: false });
-    }
-    form.elements.label.focus({ preventScroll: true });
     form.scrollIntoView({ block: "center", behavior: "smooth" });
+    form.elements.label.focus({ preventScroll: true });
   });
   async function saveBox(itemId, center) {
     const body = new FormData();
