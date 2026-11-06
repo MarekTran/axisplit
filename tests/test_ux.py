@@ -173,6 +173,21 @@ async def test_extra_tokens_weight_the_split_and_come_off_one_at_a_time(client):
     assert "5,21 €" in review.text and "1,74 €" in review.text
 
 
+async def test_a_token_sits_where_it_was_tapped(client):
+    _, receipt_id = await upload(client)
+    first, _ = await items_for(client, receipt_id)
+    await op(client, receipt_id, "place", item_id=first.id, username="Adam", spot=.3)
+    await op(client, receipt_id, "place", item_id=first.id, username="Adam")  # from the list: stays put
+    async with client.sessions() as session:
+        token = await session.scalar(select(TokenAssignment))
+        assert (token.count, token.spot) == (2, .3)
+    await op(client, receipt_id, "place", item_id=first.id, username="Adam", spot=7)  # tapped again: moves
+    review = await client.get(f"/r/{receipt_id}/review")
+    assert 'data-spot="1.0"' in review.text
+    page = await client.get(f"/r/{receipt_id}")
+    assert "left: 100.0%" in page.text
+
+
 async def test_focus_area_is_stored_and_sent_to_ocr(client):
     tab = await client.post("/tabs", data={"name": "Dinner"})
     tab_id = tab.url.path.rsplit("/", 1)[-1]

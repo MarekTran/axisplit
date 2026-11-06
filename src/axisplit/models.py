@@ -93,6 +93,9 @@ class TokenAssignment(Base):
     username: Mapped[str] = mapped_column(String, primary_key=True)
     # How many of this person's tokens sit on the item; their part of its price is count / total.
     count: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    # Where along the item's box this person's token sits, 0..1 from its left: where they last tapped.
+    # None (placed from the item list) keeps it at the box's right end.
+    spot: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class Confirmation(Base):
