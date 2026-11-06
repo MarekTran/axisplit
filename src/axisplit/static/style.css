@@ -243,13 +243,21 @@ dialog h2 { font-size: 1.2rem; }
 dialog p { font-size: .93rem; }
 .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; margin-top: 1.25rem; }
 .dialog-actions form { margin: 0; }
-/* Upload focus area: the photo with a draggable rectangle; outside it is dimmed. */
+/* Upload focus area: the photo with a draggable four-cornered area; outside it is dimmed. */
 .focus-dialog { width: min(560px, calc(100% - 1rem)); max-height: calc(100vh - 1rem); max-height: calc(100dvh - 1rem); padding: 1rem; }
 .focus-dialog .dialog-actions { margin-top: .75rem; }
-.focus-surface { position: relative; width: fit-content; margin: .5rem auto 0; overflow: hidden; border-radius: 8px;
+.focus-surface { position: relative; width: fit-content; margin: .5rem auto 0;
   touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; }
-.focus-surface img { display: block; max-width: 100%; max-height: 58vh; max-height: 58dvh; -webkit-touch-callout: none; }
-.focus-rect { position: absolute; border: 2px solid #fff; border-radius: 4px; box-shadow: 0 0 0 9999px rgb(0 0 0 / .5); pointer-events: none; }
+.focus-surface img { display: block; max-width: 100%; max-height: 54vh; max-height: 54dvh; border-radius: 8px; -webkit-touch-callout: none; }
+.focus-shade { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.focus-shade .shade { fill: rgb(0 0 0 / .5); }
+.focus-shade .edge { fill: none; stroke: #fff; stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+/* Small dots, so they hide little of a small receipt; the invisible ring makes them a 44px touch target. */
+.focus-handle { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border: 2px solid var(--accent); border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .6); cursor: grab; }
+.focus-handle::before { content: ""; position: absolute; inset: -16px; border-radius: 50%; }
+.focus-tools { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .5rem; font-size: .86rem; }
+.focus-tools button { flex: none; }
 
 /* ---------- Receipt board ---------- */
 /* The person picker sticks to the top so the current selection stays visible over a long photo. */

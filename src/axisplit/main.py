@@ -20,6 +20,7 @@ ADDED_COLUMNS = [
     ("receipts", "focus_y", "FLOAT"),
     ("receipts", "focus_w", "FLOAT"),
     ("receipts", "focus_h", "FLOAT"),
+    ("receipts", "focus_quad", "TEXT"),
     ("receipts", "printed_total_cents", "INTEGER"),
 ]
 
