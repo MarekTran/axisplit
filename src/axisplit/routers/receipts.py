@@ -16,7 +16,8 @@ from ..db import get_session
 from ..deps import get_tab_or_404, get_who, require_member
 from ..images import image_digest
 from ..models import Confirmation, Item, Receipt, ReceiptStatus, TabMember
-from ..ops import add_item, apply_op, clamp_box, get_receipt_items, recompute_status
+from ..ops import (add_item, apply_op, clamp_box, drop_confirmations, get_receipt_items, parse_cents,
+                   recompute_status)
 from ..templ import templates
 from ..viewmodels import photo_view, receipt_summary
 
@@ -248,15 +249,16 @@ async def create_item(receipt_id: str, label: str = Form(...), price: str = Form
     if receipt.status == ReceiptStatus.REMOVED:
         raise HTTPException(410, "Restore this receipt before adding items.")
     try:
-        cents = round(float(price.replace(",", ".")) * 100)
+        cents = parse_cents(price)
     except ValueError:
         raise HTTPException(422, "bad price")
     bbox = None
     if x is not None and y is not None:  # centered on x, y: a box dragged on the photo, or a tap
         w, h = (w, h) if w and h else (0.60, 0.07)
         bbox = (x - w / 2, y - h / 2, w, h)
-    await add_item(session, receipt, label.strip()[:120], cents, bbox=bbox)
-    return RedirectResponse(f"/r/{receipt_id}", 303)
+    item = await add_item(session, receipt, label.strip()[:120], cents, bbox=bbox)
+    await _items_changed(receipt_id)
+    return RedirectResponse(f"/r/{receipt_id}?added={item.id}", 303)  # the page offers Undo
 
 
 @router.post("/r/{receipt_id}/items/{item_id}/box")
@@ -264,15 +266,7 @@ async def redraw_box(receipt_id: str, item_id: str, x: float = Form(...), y: flo
                      w: float = Form(...), h: float = Form(...),
                      request: Request = None, session: AsyncSession = Depends(get_session)):
     """Move an item's box where it is really printed. Geometry only: shares and confirmations stay."""
-    receipt = await session.get(Receipt, receipt_id)
-    if receipt is None:
-        raise HTTPException(404, "receipt not found")
-    await require_member(receipt.tab_id, request, session)
-    if receipt.status == ReceiptStatus.REMOVED:
-        raise HTTPException(410, "Restore this receipt before editing it.")
-    item = await session.get(Item, item_id)
-    if item is None or item.receipt_id != receipt_id:
-        raise HTTPException(404, "item not found")
+    _, item = await _editable_item(session, request, receipt_id, item_id)
     box = clamp_box(x - w / 2, y - h / 2, w, h)
     for key, value in box.items():
         setattr(item, key, value)
@@ -281,6 +275,70 @@ async def redraw_box(receipt_id: str, item_id: str, x: float = Form(...), y: flo
     from ..realtime import hub
     await hub.broadcast(receipt_id, event)
     return event
+
+
+@router.post("/r/{receipt_id}/items/{item_id}")
+async def edit_item(receipt_id: str, item_id: str, label: str = Form(...), price: str = Form(...),
+                    request: Request = None, session: AsyncSession = Depends(get_session)):
+    """Fix a misread name or price. A new price changes shares, so confirmations reset."""
+    receipt, item = await _editable_item(session, request, receipt_id, item_id)
+    label = label.strip()[:120]
+    if not label:
+        raise HTTPException(422, "Give the item a name.")
+    try:
+        cents = parse_cents(price)
+    except ValueError:
+        raise HTTPException(422, "That price isn’t a number.")
+    if cents != item.price_cents:
+        await drop_confirmations(session, receipt_id)
+    item.label, item.price_cents = label, cents
+    await session.commit()
+    await recompute_status(session, receipt)
+    await _items_changed(receipt_id)
+    return {"item_id": item_id, "label": label, "price_cents": cents}
+
+
+@router.post("/r/{receipt_id}/items/{item_id}/delete")
+async def delete_item(receipt_id: str, item_id: str, request: Request,
+                      session: AsyncSession = Depends(get_session)):
+    """Take a line that isn't an item (or was added twice) off the split. Undo restores it."""
+    return await _set_deleted(session, request, receipt_id, item_id, True)
+
+
+@router.post("/r/{receipt_id}/items/{item_id}/restore")
+async def restore_item(receipt_id: str, item_id: str, request: Request,
+                       session: AsyncSession = Depends(get_session)):
+    return await _set_deleted(session, request, receipt_id, item_id, False)
+
+
+async def _set_deleted(session: AsyncSession, request: Request, receipt_id: str, item_id: str, deleted: bool):
+    receipt, item = await _editable_item(session, request, receipt_id, item_id, deleted=not deleted)
+    item.deleted = deleted
+    await drop_confirmations(session, receipt_id)  # its tokens leave or come back with it
+    await session.commit()
+    await recompute_status(session, receipt)
+    await _items_changed(receipt_id)
+    return {"item_id": item_id, "label": item.label, "deleted": deleted}
+
+
+async def _editable_item(session: AsyncSession, request: Request, receipt_id: str, item_id: str,
+                         deleted: bool = False) -> tuple[Receipt, Item]:
+    receipt = await session.get(Receipt, receipt_id)
+    if receipt is None:
+        raise HTTPException(404, "receipt not found")
+    await require_member(receipt.tab_id, request, session)
+    if receipt.status == ReceiptStatus.REMOVED:
+        raise HTTPException(410, "Restore this receipt before editing it.")
+    item = await session.get(Item, item_id)
+    if item is None or item.receipt_id != receipt_id or item.deleted != deleted:
+        raise HTTPException(404, "item not found")
+    return receipt, item
+
+
+async def _items_changed(receipt_id: str) -> None:
+    """Peers re-read the item list; their photo follows it."""
+    from ..realtime import hub
+    await hub.broadcast(receipt_id, {"type": "items"})
 
 
 @router.post("/r/{receipt_id}/ops")

@@ -244,6 +244,12 @@ dialog p { font-size: .93rem; }
 .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; margin-top: 1.25rem; }
 .dialog-actions form { margin: 0; }
 /* Upload focus area: the photo with a draggable four-cornered area; outside it is dimmed. */
+/* Item dialog: Delete sits apart from Save, on the far side, so a slip doesn't delete. */
+.item-form { display: grid; gap: .8rem; margin: 0; }
+.item-form h2 { margin: 0; }
+.item-form label { display: grid; gap: .3rem; font-size: .88rem; font-weight: 600; }
+.item-form .dialog-actions { margin-top: .25rem; }
+.item-form .danger-text { --btn-fg: var(--danger); margin-right: auto; padding-inline: .4rem; }
 .focus-dialog { width: min(560px, calc(100% - 1rem)); max-height: calc(100vh - 1rem); max-height: calc(100dvh - 1rem); padding: 1rem; }
 .focus-dialog .dialog-actions { margin-top: .75rem; }
 .focus-surface { position: relative; width: fit-content; margin: .5rem auto 0;
@@ -354,7 +360,7 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 99px; }
 progress::-webkit-progress-bar { background: var(--surface-3); }
 progress::-webkit-progress-value { background: var(--accent); border-radius: 99px; }
 .item-review { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); overflow: hidden; }
-.item-review > li { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: .6rem; padding: .55rem .6rem .6rem; border-top: 1px solid var(--border); }
+.item-review > li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: .6rem; padding: .55rem .6rem .6rem; border-top: 1px solid var(--border); }
 .item-review > li:first-child { border-top: 0; }
 .item-review > li.unassigned { background: color-mix(in srgb, var(--warn-soft) 70%, var(--surface)); }
 .item-review > li.muted { display: block; padding: 1rem; }
@@ -368,6 +374,9 @@ li.unassigned .item-jump { --btn-bg: var(--box-open); --btn-fg: var(--box-open-i
 .item-add > strong { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 .item-add::after { content: "+"; display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 50%;
   border: 1.5px solid var(--sel-c, var(--border-strong)); color: var(--sel-c, var(--text-3)); font-size: 1.1rem; font-weight: 500; line-height: 1; }
+.item-add { grid-column: 2 / -1; }
+/* A labelled button, not a hidden gesture: every item says it can be changed. */
+.item-edit { --btn-fg: var(--text-2); align-self: end; gap: .3rem; min-height: 36px; padding-inline: .5rem; font-weight: 550; }
 .holders { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; padding-left: .4rem; }
 .holder { --btn-bg: color-mix(in srgb, var(--c) 14%, var(--surface)); --btn-hover: color-mix(in srgb, var(--c) 22%, var(--surface)); --btn-fg: var(--text);
   --btn-border: color-mix(in srgb, var(--c) 45%, var(--surface)); gap: .35rem; min-height: 34px; padding: .15rem .65rem .15rem .2rem; border-radius: 999px; font-size: .84rem; font-weight: 550; }

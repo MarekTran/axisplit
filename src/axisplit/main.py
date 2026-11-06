@@ -27,6 +27,7 @@ ADDED_COLUMNS = [
     ("receipts", "view_y", "FLOAT"),
     ("receipts", "view_w", "FLOAT"),
     ("receipts", "view_h", "FLOAT"),
+    ("items", "deleted", "BOOLEAN NOT NULL DEFAULT 0"),
 ]
 
 

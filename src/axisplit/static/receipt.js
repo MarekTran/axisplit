@@ -99,6 +99,8 @@
     if (add) place(add.dataset.add);
     const holder = event.target.closest(".holder");
     if (holder) send({ op: "unplace", item_id: holder.dataset.item, username: holder.dataset.user });
+    const edit = event.target.closest("[data-edit]");
+    if (edit) openItem(edit);
     const confirm = event.target.closest("[data-confirm]");
     if (confirm && !confirm.disabled) send({ op: confirm.dataset.confirm });
     const jump = event.target.closest("[data-jump]");
@@ -181,6 +183,7 @@
       const status = document.getElementById("status");
       status.textContent = next.dataset.statusLabel;
       status.className = `badge ${next.dataset.status}`;
+      syncPhoto();
       syncBoxTokens();
     } catch (error) { feedback(error.message); }
   }
@@ -259,6 +262,88 @@
     }
   }
   syncBoxTokens();  // Spreads out pips the server placed on top of each other.
+  // The photo follows the item list: deleted items' boxes go, restored or added ones appear,
+  // moved ones move, and box numbers match the rows again.
+  function syncPhoto() {
+    const layer = imgwrap.querySelector(".photo");
+    const rows = [...board.querySelectorAll(".item-review li[data-item]")];
+    const ids = new Set(rows.map((row) => row.dataset.item));
+    for (const box of layer.querySelectorAll(".box[data-item]")) if (!ids.has(box.dataset.item)) box.remove();
+    rows.forEach((row, i) => {
+      const id = row.dataset.item;
+      let box = layer.querySelector(`.box[data-item="${id}"]`);
+      if (!box) {
+        box = Object.assign(document.createElement("div"), { className: "box" });
+        box.dataset.item = id;
+        box.append(...["box-number", "lbl", "tokens"].map((className) => Object.assign(document.createElement("span"), { className })));
+        layer.insertBefore(box, layer.querySelector(".box.draft"));  // under the box being drawn
+      }
+      box.querySelector(".box-number").textContent = i + 1;
+      box.querySelector(".lbl").textContent = `${itemLabel(id)} — ${row.querySelector(".item-add .amount").textContent}`;
+      if (!box.classList.contains("editing")) {
+        const [x, y, w, h] = row.querySelector("[data-box]").dataset.box.split(" ").map(Number);
+        placeRect(box, { x, y, w, h });
+      }
+    });
+  }
+
+  // An item's dialog fixes a misread name or price, moves its box, or deletes it (with Undo).
+  const itemDialog = document.getElementById("item-dialog");
+  const itemForm = itemDialog.querySelector("form");
+  let editingItem = null;
+  function openItem(button) {
+    if (!who) { location.href = `/claim?next=${encodeURIComponent(location.pathname)}`; return; }
+    editingItem = button.dataset.edit;
+    const number = button.closest("li").querySelector(".item-jump").textContent;
+    itemDialog.querySelector("h2").textContent = `Edit item ${number}`;
+    itemForm.elements.label.value = itemLabel(editingItem);
+    itemForm.elements.price.value = (Number(button.dataset.price) / 100).toFixed(2).replace(".", ",");
+    itemDialog.showModal();
+  }
+  itemForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const body = new FormData(itemForm);
+    itemDialog.close();
+    changeItem(editingItem, "", body, (item) => `Saved ${item.label}.`);
+  });
+  itemDialog.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-item-action]")?.dataset.itemAction;
+    if (!action) return;
+    itemDialog.close();
+    if (action === "delete") deleteItem(editingItem);
+    if (action === "box") {
+      startDrawing({ itemId: editingItem, label: itemLabel(editingItem) });
+      imgwrap.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  });
+  function deleteItem(id) {
+    changeItem(id, "/delete", null, (item) => `Deleted ${item.label}.`,
+      () => changeItem(id, "/restore", null, (item) => `${item.label} is back.`));
+  }
+  // Queued with the token edits, so a delete and the taps around it stay in order.
+  function changeItem(id, action, body, message, undoAction = null) {
+    feedback("Saving…");
+    saving++;
+    queue = queue.then(async () => {
+      try {
+        const response = await fetch(`/r/${rid}/items/${id}${action}`, { method: "POST", body });
+        const item = await response.json();
+        if (!response.ok) throw new Error(item.detail || "Couldn’t save. Please try again.");
+        feedback(message(item), undoAction);
+      } catch (error) {
+        feedback(error.message || "Connection lost. Your change wasn’t confirmed; please retry.");
+      }
+    }).finally(() => { if (!--saving) refreshReview(); });
+  }
+  // Just added from "Add a missing item": show where it went, and offer to take it back.
+  const added = new URLSearchParams(location.search).get("added");
+  if (added) {
+    history.replaceState(null, "", location.pathname);
+    const box = imgwrap.querySelector(`.box[data-item="${added}"]`);
+    // Once the photo has its height, else the box isn't where it will be.
+    if (box) imgwrap.querySelector("img").decode().catch(() => {}).then(() => { box.scrollIntoView({ block: "center" }); highlight(box); });
+    feedback(`Added ${itemLabel(added)}. Edit it from the list.`, () => deleteItem(added));
+  }
   // Drawing a box on the photo: for a missing item (while "Add a missing item" is open), or to
   // move an item's box where it is really printed. Either way the box can be adjusted (corners,
   // moving it) until it is saved; the bar under the photo says how and holds Save and Cancel.

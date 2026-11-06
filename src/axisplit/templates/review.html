@@ -18,6 +18,9 @@
                 aria-label="Remove one of {{ t.username }}’s tokens from {{ item.label }}"><span class="avatar" aria-hidden="true">{{ t.username[:1] }}</span>{{ t.username }}{% if t.count > 1 %}<b class="count">×{{ t.count }}</b>{% endif %}</button>
       {% else %}<small class="unassigned-label">Nobody yet</small>{% endfor %}
       </div>
+      {# Carries what the item dialog and the photo need: its price to edit, and where its box is. #}
+      <button type="button" class="item-edit text-button small" data-edit="{{ item.id }}" data-price="{{ item.price_cents }}"
+              data-box="{{ item.x }} {{ item.y }} {{ item.w }} {{ item.h }}" aria-label="Edit {{ item.label }}">{{ icon("pencil") }}Edit</button>
     </li>
   {% else %}<li class="muted">Detect the receipt to see its items here.</li>{% endfor %}
   </ol>
