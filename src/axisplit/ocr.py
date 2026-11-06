@@ -126,6 +126,10 @@ class Backend:
         """Where the photo's text is (x, y, w, h), roughly the receipt; None if unknown."""
         return None
 
+    def currency(self, image: Path) -> str | None:
+        """ISO code of the receipt's currency, read off the photo; None if unknown."""
+        return None
+
 
 class StubBackend(Backend):
     """Explicit opt-in for isolated UI tests only, never the app default."""
@@ -253,6 +257,9 @@ class PaddleBackend(Backend):
         x, y = float(min(xs)) / width, float(min(ys)) / height
         return x, y, float(max(xs)) / width - x, float(max(ys)) / height - y
 
+    def currency(self, image: Path) -> str | None:
+        return receipt_rules.currency(self._read(image, None)[0])  # cached from the total's read
+
     def _pick_total(self, rows: list[tuple[str, int | None]], candidates: list[int]) -> int:
         """Index of the row the decision model chooses as the total, from text only."""
         letter = {i: LETTERS[k] for k, i in enumerate(candidates)}
@@ -343,3 +350,7 @@ def extract_total(image: Path) -> int | None:
 
 def text_extent(image: Path) -> Focus | None:
     return get_backend().text_extent(image)
+
+
+def currency(image: Path) -> str | None:
+    return get_backend().currency(image)

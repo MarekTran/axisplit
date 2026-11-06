@@ -94,6 +94,15 @@ RECEIPT = [
 ]
 
 
+def test_currency_from_signs_else_the_shops_vat_id():
+    line = lambda text: (text, box(0, 0, 10, 10))
+    assert receipt_rules.currency([line("Celkem"), line("1 035 Kč"), line("190 Kc")]) == "CZK"
+    assert receipt_rules.currency([line("TOTAL"), line("€ 74,50")]) == "EUR"
+    assert receipt_rules.currency([line("ICO 04973771 DIč CZ04973771"), line("610,00")]) == "CZK"
+    assert receipt_rules.currency([line("IC DPH: SK7020000317"), line("121,16")]) == "EUR"
+    assert receipt_rules.currency([line("TOTAL 12,40")]) is None
+
+
 def test_rules_read_items_with_boxes():
     parsed = receipt_rules.parse(RECEIPT, 1000, 2000)
     assert [(i["label"], i["price_cents"]) for i in parsed["items"]] == [("Beer", 450), ("Nachos", 890)]

@@ -24,8 +24,8 @@
 {% endif %}
 
 <div class="totals">
-  <div><span>Receipt totals</span><strong class="amount">{{ total_cents | eur }}</strong></div>
-  <div class="{{ 'attention' if unassigned_cents else 'done' }}"><span>Still to assign</span><strong class="amount">{{ unassigned_cents | eur }}</strong></div>
+  <div><span>Receipt totals</span><strong class="amount">{{ total_by_currency | money_by_currency(currency) }}</strong></div>
+  <div class="{{ 'attention' if unassigned_by_currency.values() | sum else 'done' }}"><span>Still to assign</span><strong class="amount">{{ unassigned_by_currency | money_by_currency(currency) }}</strong></div>
 </div>
 
 <form method="post" action="/t/{{ tab.id }}/receipts" enctype="multipart/form-data" data-busy="Reading the receipt…" class="upload-form" id="upload">
@@ -62,15 +62,15 @@
         <span class="receipt-main">
           <span class="receipt-title">{{ r.created_at | receipt_date }} <small>· {{ r.uploaded_by }}</small></span>
           <span class="receipt-sub"><span class="badge {{ r.status }}">{{ r.status | status_label }}</span>
-            <span>{% if not s.item_count %}No items yet{% elif not s.complete %}{{ s.assigned_count }}/{{ s.item_count }} items · {{ s.unassigned_total | eur }} left{% elif s.waiting %}Waiting for {{ s.waiting | join(', ') }}{% else %}{{ s.item_count }} items{% endif %}</span></span>
+            <span>{% if not s.item_count %}No items yet{% elif not s.complete %}{{ s.assigned_count }}/{{ s.item_count }} items · {{ s.unassigned_total | money(r.currency) }} left{% elif s.waiting %}Waiting for {{ s.waiting | join(', ') }}{% else %}{{ s.item_count }} items{% endif %}</span></span>
         </span>
-        <strong class="amount">{{ s.total | eur }}</strong>
+        <strong class="amount">{{ s.total | money(r.currency) }}</strong>
       </a>
       <button type="button" class="icon-button" data-dialog="remove-{{ r.id }}" aria-label="Remove receipt from {{ r.created_at | receipt_date }}">{{ icon("trash") }}</button>
       {% if row.duplicate_of %}<p class="duplicate-hint"><strong>Same photo as another receipt.</strong> {{ 'This copy has assignments—check before removing it.' if s.assigned_count else 'This copy has no assignments yet.' }} <a href="/r/{{ row.duplicate_of }}">Compare</a></p>{% endif %}
       <dialog id="remove-{{ r.id }}" aria-labelledby="remove-title-{{ r.id }}">
         <h2 id="remove-title-{{ r.id }}">Remove this receipt?</h2>
-        <p>This removes <strong>{{ s.total | eur }}</strong> from the tab total. {% if s.assigned_count %}This copy has <strong>{{ s.assigned_count }} assigned items</strong> and {{ s.confirmed | length }} confirmation{{ '' if s.confirmed | length == 1 else 's' }}.{% else %}This copy has no assignments.{% endif %}</p>
+        <p>This removes <strong>{{ s.total | money(r.currency) }}</strong> from the tab total. {% if s.assigned_count %}This copy has <strong>{{ s.assigned_count }} assigned items</strong> and {{ s.confirmed | length }} confirmation{{ '' if s.confirmed | length == 1 else 's' }}.{% else %}This copy has no assignments.{% endif %}</p>
         <p class="muted">Items, assignments and confirmations are kept so you can undo.</p>
         <div class="dialog-actions"><button type="button" class="secondary" data-close-dialog autofocus>Keep receipt</button>
           <form method="post" action="/r/{{ r.id }}/remove"><button class="danger">Remove receipt</button></form></div>
@@ -89,7 +89,7 @@
   {% for m in members %}
     <li style="--c: {{ m.color }}">
       <span class="person"><span class="avatar" aria-hidden="true">{{ m.username[:1] }}</span>{{ m.username }}{% if m.username == who %}<small class="you-tag">you</small>{% endif %}</span>
-      <strong class="amount">{{ totals.get(m.username, 0) | eur }}</strong>
+      <strong class="amount">{{ totals.get(m.username, {}) | money_by_currency(currency) }}</strong>
     </li>
   {% endfor %}
   </ul>

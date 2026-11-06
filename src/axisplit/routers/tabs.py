@@ -56,7 +56,8 @@ async def tab_page(
     ))
     duplicates = await asyncio.to_thread(duplicate_receipts, receipts)
     rows = []
-    totals = {m.username: 0 for m in members}
+    totals = {m.username: {} for m in members}  # username -> currency -> cents
+    sums = {"total": {}, "unassigned_total": {}}  # currency -> cents, over all receipts
     for receipt in receipts:
         items = await get_receipt_items(session, receipt.id)
         confirmed = set(await session.scalars(
@@ -64,7 +65,10 @@ async def tab_page(
         ))
         summary = receipt_summary(items, confirmed)
         for username, cents in summary["totals"].items():
-            totals[username] = totals.get(username, 0) + cents
+            person = totals.setdefault(username, {})
+            person[receipt.currency] = person.get(receipt.currency, 0) + cents
+        for key, by_currency in sums.items():
+            by_currency[receipt.currency] = by_currency.get(receipt.currency, 0) + summary[key]
         rows.append({"receipt": receipt, "summary": summary,
                      "duplicate_of": duplicates.get(receipt.id)})
     removed = await session.get(Receipt, request.query_params.get("removed", ""))
@@ -72,9 +76,8 @@ async def tab_page(
         removed = None
     return templates.TemplateResponse(request, "tab.html", {
         "tab": tab, "who": who, "members": members, "rows": rows, "totals": totals,
-        "total_cents": sum(row["summary"]["total"] for row in rows),
-        "assigned_cents": sum(row["summary"]["assigned"] for row in rows),
-        "unassigned_cents": sum(row["summary"]["unassigned_total"] for row in rows),
+        "total_by_currency": sums["total"], "unassigned_by_currency": sums["unassigned_total"],
+        "currency": receipts[0].currency if receipts else "EUR",  # the latest receipt's, for zeros
         "duplicate_count": len(duplicates), "removed": removed,
     })
 

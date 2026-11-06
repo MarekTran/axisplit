@@ -53,3 +53,26 @@ def photo_view(receipt: Receipt, items: list[Item], size: tuple[int, int], margi
     width, height = size
     return {"width": round(100 / w, 3), "left": round(-100 * x1 / w, 3), "top": round(-100 * y1 / h, 3),
             "aspect": f"{w * width:.0f} / {h * height:.0f}"}
+
+
+# How each supported currency is written: sign, and whether it goes before the amount.
+CURRENCIES = {"EUR": ("€", False), "CZK": ("Kč", False), "PLN": ("zł", False), "HUF": ("Ft", False),
+              "CHF": ("CHF", False), "GBP": ("£", True), "USD": ("$", True)}
+
+
+def currency_sign(code: str) -> str:
+    return CURRENCIES.get(code, (code, False))[0]
+
+
+def money(cents: int, code: str = "EUR") -> str:
+    """1 035,00 Kč, 12,50 €, £12,50: thousands grouped by a no-break space, decimal comma."""
+    sign, before = CURRENCIES.get(code, (code, False))
+    whole, part = divmod(abs(cents), 100)
+    number = f"{'-' if cents < 0 else ''}{whole:,}".replace(",", "\u00a0") + f",{part:02d}"
+    return f"{sign}{number}" if before else f"{number}\u00a0{sign}"
+
+
+def money_by_currency(amounts: dict[str, int], fallback: str = "EUR") -> str:
+    """A tab's receipts can be in several currencies: each sum is shown, never added together."""
+    shown = [money(cents, code) for code, cents in sorted(amounts.items()) if cents]
+    return " + ".join(shown) or money(0, fallback)
