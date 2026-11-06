@@ -67,10 +67,13 @@ async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -
         # statements, so rapid taps from several phones can't lose a count.
         match = (TokenAssignment.item_id == item_id, TokenAssignment.username == target)
         if kind == "place":
+            spot = op.get("spot")
+            spot = max(0.0, min(float(spot), 1.0)) if isinstance(spot, (int, float)) else None
+            moved = {} if spot is None else {"spot": spot}  # a tap on the photo moves the token there
             added = await session.execute(
-                update(TokenAssignment).where(*match).values(count=TokenAssignment.count + 1))
+                update(TokenAssignment).where(*match).values(count=TokenAssignment.count + 1, **moved))
             if not added.rowcount:
-                session.add(TokenAssignment(item_id=item_id, username=target))
+                session.add(TokenAssignment(item_id=item_id, username=target, spot=spot))
         else:
             taken = await session.execute(update(TokenAssignment).where(
                 *match, TokenAssignment.count > 1).values(count=TokenAssignment.count - 1))

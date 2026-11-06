@@ -51,7 +51,7 @@
           <span class="lbl">{{ item.label }} — {{ item.price_cents | eur }}</span>
           <span class="tokens">
           {% for t in item.tokens | sort(attribute='username') %}
-            <button type="button" class="pip" data-user="{{ t.username }}" style="--c: {{ colors.get(t.username, '#888') }}"
+            <button type="button" class="pip" data-user="{{ t.username }}" style="--c: {{ colors.get(t.username, '#888') }}{% if t.spot is not none %}; left: {{ t.spot * 100 }}%{% endif %}"
                     aria-label="Remove one of {{ t.username }}’s tokens from {{ item.label }}" title="Remove one of {{ t.username }}’s tokens"><span>{{ t.username[:1] }}</span>{% if t.count > 1 %}<b>{{ t.count }}</b>{% endif %}</button>
           {% endfor %}
           </span>

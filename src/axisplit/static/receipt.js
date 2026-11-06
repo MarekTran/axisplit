@@ -70,22 +70,26 @@
     box.classList.add("hit");
     setTimeout(() => box.classList.remove("hit"), 1500);
   }
-  function place(itemId) {
+  // spot: where along the item's box the token goes (0..1), when it was tapped on the photo.
+  function place(itemId, spot = null) {
     if (!who) { feedback("Choose your name before placing tokens."); return; }
     if (!selected) { feedback("Choose a person above first."); return; }
-    send({ op: "place", item_id: itemId, username: selected });
+    send({ op: "place", item_id: itemId, username: selected, ...(spot === null ? {} : { spot }) });
   }
   imgwrap.addEventListener("click", (event) => {
     if (drawing || Date.now() - drewAt < 500) return;  // That press drew a box.
+    // A token sits where people tap, so a tap on someone else's token adds the selected person
+    // beside it; only the selected person's own token comes off (anyone's comes off in the list).
     const pip = event.target.closest("button.pip");
-    if (pip) {
+    if (pip && (!selected || pip.dataset.user === selected)) {
       send({ op: "unplace", item_id: pip.closest(".box").dataset.item, username: pip.dataset.user });
       return;
     }
     const target = resolveItem(event.clientX, event.clientY);
     if (!target) { feedback("Detect the receipt first, or add a missing item below."); return; }
     if (who && selected) highlight(target.el);
-    place(target.id);
+    const box = target.el.getBoundingClientRect();  // The token sits where the finger was.
+    place(target.id, Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)));
   });
 
   // Delegation survives SSR review-fragment replacements.
@@ -121,7 +125,9 @@
       const count = (counts.get(op.username) || 0) + (op.op === "place" ? 1 : -1);
       if (count < 0) return;
       counts.set(op.username, count);
-      renderTokens(op.item_id, counts); // Show the new count right away; the server's review replaces it.
+      const spots = tokenSpots(op.item_id);
+      if (op.spot !== undefined) spots.set(op.username, op.spot);
+      renderTokens(op.item_id, counts, spots); // Show the new count right away; the server's review replaces it.
       const label = itemLabel(op.item_id);
       message = !count ? `${op.username} removed from ${label}. Saved.`
         : count === 1 && op.op === "place" ? `${op.username} added to ${label}. Saved.`
@@ -183,6 +189,10 @@
     return new Map([...board.querySelectorAll(`.holder[data-item="${itemId}"]`)]
       .map(holder => [holder.dataset.user, Number(holder.dataset.count)]));
   }
+  function tokenSpots(itemId) {  // null: no spot, the token sits at the box's right end
+    return new Map([...board.querySelectorAll(`.holder[data-item="${itemId}"]`)]
+      .map(holder => [holder.dataset.user, holder.dataset.spot === "" ? null : Number(holder.dataset.spot)]));
+  }
   function byName([a], [b]) {
     const x = a.toLowerCase(), y = b.toLowerCase();
     return x < y ? -1 : x > y ? 1 : 0;
@@ -197,7 +207,7 @@
     button.append(Object.assign(document.createElement("span"), { textContent: user.slice(0, 1) }));
     return button;
   }
-  function renderPips(itemId, counts) {
+  function renderPips(itemId, counts, spots) {
     const box = imgwrap.querySelector(`.box[data-item="${itemId}"]`);
     if (!box) return;
     const label = itemLabel(itemId);
@@ -208,16 +218,31 @@
       if (n > 1) pip.append(Object.assign(document.createElement("b"), { textContent: n }));
       return pip;
     }));
+    layoutPips(box, spots);
     box.classList.toggle("assigned", placed.length > 0);
   }
-  function renderTokens(itemId, counts) {
-    renderPips(itemId, counts);
+  // Each pip sits where its person tapped (no spot: the right end); pips that would overlap are
+  // pushed apart along the box, so every person's token stays visible and tappable.
+  function layoutPips(box, spots) {
+    const width = box.clientWidth, half = 12, step = 26;
+    const pips = [...box.querySelectorAll(".pip")].map((pip) => {
+      const spot = spots.get(pip.dataset.user);
+      return { pip, at: Math.min(Math.max(spot == null ? width : spot * width, half), width - half) };
+    }).sort((a, b) => a.at - b.at);
+    pips.forEach((p, i) => { if (i) p.at = Math.max(p.at, pips[i - 1].at + step); });
+    for (let i = pips.length - 1; i >= 0; i--) {  // Pushed past the right end: back from there.
+      pips[i].at = Math.min(pips[i].at, i === pips.length - 1 ? width - half : pips[i + 1].at - step);
+    }
+    for (const { pip, at } of pips) pip.style.left = `${(at / width) * 100}%`;
+  }
+  function renderTokens(itemId, counts, spots) {
+    renderPips(itemId, counts, spots);
     const row = board.querySelector(`.item-review li[data-item="${itemId}"]`);
     const label = itemLabel(itemId);
     const placed = [...counts].filter(([, n]) => n > 0).sort(byName);
     const chips = placed.map(([user, n]) => {
       const chip = tokenButton("holder", user, label);
-      Object.assign(chip.dataset, { item: itemId, count: n });
+      Object.assign(chip.dataset, { item: itemId, count: n, spot: spots.get(user) ?? "" });
       Object.assign(chip.firstChild, { className: "avatar" }).setAttribute("aria-hidden", "true");
       chip.append(user);
       if (n > 1) chip.append(Object.assign(document.createElement("b"), { className: "count", textContent: `×${n}` }));
@@ -229,8 +254,11 @@
     row.classList.toggle("unassigned", !placed.length);
   }
   function syncBoxTokens() {
-    for (const box of imgwrap.querySelectorAll(".box")) renderPips(box.dataset.item, tokenCounts(box.dataset.item));
+    for (const box of imgwrap.querySelectorAll(".box")) {
+      renderPips(box.dataset.item, tokenCounts(box.dataset.item), tokenSpots(box.dataset.item));
+    }
   }
+  syncBoxTokens();  // Spreads out pips the server placed on top of each other.
   // Drawing a box on the photo: for a missing item (while "Add a missing item" is open), or to
   // move an item's box where it is really printed.
   let drawing = null;  // { itemId, label } when redrawing, {} when adding a missing item

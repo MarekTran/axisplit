@@ -16,6 +16,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 # create_all never alters existing tables, so columns added after a table first shipped are added here.
 ADDED_COLUMNS = [
     ("token_assignments", "count", "INTEGER NOT NULL DEFAULT 1"),
+    ("token_assignments", "spot", "FLOAT"),
     ("receipts", "focus_x", "FLOAT"),
     ("receipts", "focus_y", "FLOAT"),
     ("receipts", "focus_w", "FLOAT"),
