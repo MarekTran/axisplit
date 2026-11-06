@@ -1,5 +1,6 @@
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -32,13 +33,30 @@ def clean_focus(x: float | None, y: float | None, w: float | None, h: float | No
     return (x, y, w, h) if w >= 0.05 and h >= 0.05 else None
 
 
+def clean_quad(raw: str | None) -> ocr.Quad | None:
+    """The area's four corners (JSON [[x, y], ...]), kept on the photo; None if malformed."""
+    try:
+        points = [(float(x), float(y)) for x, y in json.loads(raw)]
+    except (TypeError, ValueError):
+        return None
+    if len(points) != 4:
+        return None
+    return [(max(0.0, min(x, 1.0)), max(0.0, min(y, 1.0))) for x, y in points]
+
+
+def quad_bounds(quad: ocr.Quad) -> tuple[float, float, float, float]:
+    xs, ys = [x for x, _ in quad], [y for _, y in quad]
+    return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+
+
 async def detect_receipt(session: AsyncSession, receipt: Receipt) -> str:
     path = UPLOAD_DIR / receipt.image_path
     focus = clean_focus(receipt.focus_x, receipt.focus_y, receipt.focus_w, receipt.focus_h)
+    quad = clean_quad(receipt.focus_quad) if focus else None
     # Two independent reads: the items (inside the focus area) and the printed total (whole photo),
     # so the total can check the items. A failed total never blocks the items.
     extracted, total = await asyncio.gather(
-        asyncio.to_thread(ocr.extract_items, path, focus),
+        asyncio.to_thread(ocr.extract_items, path, focus, quad),
         asyncio.to_thread(ocr.extract_total, path),
         return_exceptions=True,
     )
@@ -77,6 +95,7 @@ async def upload_receipt(
     image: UploadFile = File(...),
     focus_x: float | None = Form(None), focus_y: float | None = Form(None),
     focus_w: float | None = Form(None), focus_h: float | None = Form(None),
+    focus_quad: str | None = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
     member = await require_member(tab_id, request, session)
@@ -108,11 +127,13 @@ async def upload_receipt(
         if digest == await asyncio.to_thread(image_digest, UPLOAD_DIR / existing.image_path):
             dest.unlink(missing_ok=True)
             return RedirectResponse(f"/r/{existing.id}?duplicate=1", 303)
-    focus = clean_focus(focus_x, focus_y, focus_w, focus_h)
+    quad = clean_quad(focus_quad)
+    focus = clean_focus(*quad_bounds(quad)) if quad else clean_focus(focus_x, focus_y, focus_w, focus_h)
     receipt = Receipt(id=rid, tab_id=tab.id, uploaded_by=member.username, image_path=dest.name,
                       title=image.filename or "Receipt")
     if focus:
         receipt.focus_x, receipt.focus_y, receipt.focus_w, receipt.focus_h = focus
+        receipt.focus_quad = json.dumps(quad) if quad else None
     session.add(receipt)
     await session.commit()
 

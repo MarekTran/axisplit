@@ -67,6 +67,16 @@ class TotalDetection(BaseModel):
 
 
 Focus = tuple[float, float, float, float]  # x, y, w, h of the user's items area, normalized to the photo
+Quad = list[tuple[float, float]]  # its corners, when dragged off a rectangle to fit a tilted receipt
+
+
+def inside(quad: Quad, x: float, y: float) -> bool:
+    """Whether a point lies in the polygon (ray casting)."""
+    hit = False
+    for (x1, y1), (x2, y2) in zip(quad, quad[1:] + quad[:1]):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            hit = not hit
+    return hit
 MAX_SIDE = 1600  # longest image side sent to the model
 
 
@@ -105,7 +115,8 @@ Use null if no total is readable.
 class Backend:
     name = "base"
 
-    def extract_items(self, image: Path, focus: Focus | None = None) -> list[ExtractedItem]:
+    def extract_items(self, image: Path, focus: Focus | None = None, quad: Quad | None = None) -> list[ExtractedItem]:
+        """Items inside the focus area: the crop is `focus`, and with `quad` only what is inside it."""
         raise NotImplementedError
 
     def extract_total(self, image: Path) -> int | None:
@@ -116,7 +127,7 @@ class StubBackend(Backend):
     """Explicit opt-in for isolated UI tests only, never the app default."""
     name = "stub"
 
-    def extract_items(self, image: Path, focus: Focus | None = None) -> list[ExtractedItem]:
+    def extract_items(self, image: Path, focus: Focus | None = None, quad: Quad | None = None) -> list[ExtractedItem]:
         return []
 
     def extract_total(self, image: Path) -> int | None:
@@ -126,7 +137,7 @@ class StubBackend(Backend):
 class LocalVisionBackend(Backend):
     name = "local-vision"
 
-    def extract_items(self, image: Path, focus: Focus | None = None) -> list[ExtractedItem]:
+    def extract_items(self, image: Path, focus: Focus | None = None, quad: Quad | None = None) -> list[ExtractedItem]:
         fx, fy, fw, fh = focus or (0.0, 0.0, 1.0, 1.0)
         with Image.open(image) as im:
             if focus:  # Only the items area, upscaled: fewer stray numbers, more pixels per line.
@@ -138,12 +149,13 @@ class LocalVisionBackend(Backend):
                     im = im.resize((round(im.width * scale), round(im.height * scale)), Image.LANCZOS)
             result = self._ask(im, FOCUS_NOTE + PROMPT if focus else PROMPT, Detection)
         # Boxes come back in the sent image's 0..1000 frame; map them onto the whole photo.
-        return [ExtractedItem(
+        items = [ExtractedItem(
             label=i.label, price_cents=i.price_cents,
             x=fx + i.bbox[0] / 1000 * fw, y=fy + i.bbox[1] / 1000 * fh,
             w=(i.bbox[2] - i.bbox[0]) / 1000 * fw,
             h=(i.bbox[3] - i.bbox[1]) / 1000 * fh,
         ) for i in result.items]
+        return [i for i in items if not quad or inside(quad, i.x + i.w / 2, i.y + i.h / 2)]
 
     def extract_total(self, image: Path) -> int | None:
         with Image.open(image) as im:  # Whole photo: the total sits outside the items area.
@@ -207,8 +219,11 @@ class PaddleBackend(Backend):
         self._engine = None
         self._reads: dict = {}  # without a focus area, an upload's items and total share one read
 
-    def extract_items(self, image: Path, focus: Focus | None = None) -> list[ExtractedItem]:
+    def extract_items(self, image: Path, focus: Focus | None = None, quad: Quad | None = None) -> list[ExtractedItem]:
         lines, width, height = self._read(image, focus)
+        if quad:  # Lines centred outside it, such as a total below a tilted last item, are left out.
+            lines = [(text, box) for text, box in lines
+                     if inside(quad, sum(x for x, _ in box) / 4 / width, sum(y for _, y in box) / 4 / height)]
         return [ExtractedItem(
             label=i["label"][:120], price_cents=i["price_cents"],
             x=i["bbox"][0], y=i["bbox"][1], w=i["bbox"][2] - i["bbox"][0], h=i["bbox"][3] - i["bbox"][1],
@@ -306,8 +321,8 @@ def get_backend() -> Backend:
     raise ValueError(f"AXISPLIT_OCR_BACKEND={choice!r}: use paddle, vision or stub")
 
 
-def extract_items(image: Path, focus: Focus | None = None) -> list[ExtractedItem]:
-    return get_backend().extract_items(image, focus)
+def extract_items(image: Path, focus: Focus | None = None, quad: Quad | None = None) -> list[ExtractedItem]:
+    return get_backend().extract_items(image, focus, quad)
 
 
 def extract_total(image: Path) -> int | None:

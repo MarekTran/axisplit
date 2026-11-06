@@ -1,6 +1,7 @@
 """Interaction constraints and mistake recovery, isolated from the running app DB."""
 
 import io
+import json
 
 import httpx
 import pytest_asyncio
@@ -22,7 +23,7 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr(receipts, "UPLOAD_DIR", uploads)
     monkeypatch.setattr(images, "UPLOAD_DIR", uploads)
     client_focus = []
-    monkeypatch.setattr(ocr, "extract_items", lambda _, focus: client_focus.append(focus) or [
+    monkeypatch.setattr(ocr, "extract_items", lambda _, focus, quad: client_focus.append(focus if quad is None else (focus, quad)) or [
         ocr.ExtractedItem("Mango tea", 695, .2, .4, .6, .02),
         ocr.ExtractedItem("Watermelon tea", 695, .2, .43, .6, .02),
     ])
@@ -184,6 +185,20 @@ async def test_focus_area_is_stored_and_sent_to_ocr(client):
         receipt = await session.get(Receipt, receipt_id)
         assert (receipt.focus_x, receipt.focus_h, receipt.printed_total_cents) == (.1, .4, 1390)
     assert "match the receipt total" in page.text
+
+
+async def test_dragged_corners_are_stored_and_bound_the_crop(client):
+    tab = await client.post("/tabs", data={"name": "Dinner"})
+    tab_id = tab.url.path.rsplit("/", 1)[-1]
+    quad = [[.1, .3], [.9, .32], [.9, .7], [.1, .66]]
+    page = await client.post(f"/t/{tab_id}/receipts", files={"image": ("check.jpg", photo(), "image/jpeg")},
+                             data={"focus_x": ".1", "focus_y": ".3", "focus_w": ".8", "focus_h": ".4",
+                                   "focus_quad": json.dumps(quad)})
+    receipt_id = page.url.path.rsplit("/", 1)[-1]
+    (focus, sent), = client.focus
+    assert [round(v, 6) for v in focus] == [.1, .3, .8, .4] and sent == [tuple(p) for p in quad]
+    async with client.sessions() as session:
+        assert json.loads((await session.get(Receipt, receipt_id)).focus_quad) == quad
 
 
 async def test_printed_total_flags_a_missing_item(client, monkeypatch):

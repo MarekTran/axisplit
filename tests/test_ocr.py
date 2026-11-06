@@ -133,6 +133,15 @@ def test_paddle_reads_the_focus_crop_and_maps_boxes_to_the_photo(paddle):
     assert (beer.x, beer.y, round(beer.w, 4), round(beer.h, 4)) == (0.1, 0.205, 0.79, 0.015)
 
 
+def test_paddle_leaves_out_lines_outside_a_tilted_area(paddle):
+    backend, fake, image = paddle
+    fake.origin = (50, 400)
+    # The crop still holds both rows; the area's bottom edge runs between them.
+    quad = [(0.05, 0.2), (0.95, 0.2), (0.95, 0.226), (0.05, 0.222)]
+    beer, = backend.extract_items(image, focus=(0.05, 0.2, 0.9, 0.08), quad=quad)
+    assert (beer.label, beer.price_cents) == ("Beer", 450)
+
+
 def test_decision_model_picks_the_total_from_the_amount_lines(paddle, monkeypatch):
     backend, _, image = paddle
     sent = {}

@@ -59,6 +59,8 @@ class Receipt(Base):
     focus_y: Mapped[float | None] = mapped_column(Float, nullable=True)
     focus_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     focus_h: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Its four corners as JSON [[x, y], ...]: dragged onto a tilted receipt, the area is no rectangle.
+    focus_quad: Mapped[str | None] = mapped_column(String, nullable=True)
     # Grand total as printed, read by a separate OCR call to cross-check the items.
     printed_total_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
