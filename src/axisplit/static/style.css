@@ -275,8 +275,11 @@ dialog p { font-size: .93rem; }
 .connection[data-state=offline]::before { background: var(--warn); }
 
 .receipt-workspace { display: grid; gap: 1rem; align-items: start; }
-/* No padding here: boxes are positioned in % of this element and must match the image's rendered rect. */
+/* No padding here: boxes are positioned in % of .photo and must match the image's rendered rect. Cropped,
+   the box shows the receipt: .photo is the whole photo, scaled up and shifted so the receipt fills it. */
 .imgwrap { position: relative; overflow: hidden; border-radius: var(--r); background: #0b0f0e; cursor: pointer; }
+.imgwrap .photo { position: relative; }
+.imgwrap.cropped .photo { position: absolute; }
 .imgwrap img { display: block; width: 100%; height: auto; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .box { position: absolute; display: flex; align-items: center; border: 2px dashed var(--box-open); border-radius: 6px;
   background: rgb(242 169 59 / .08); pointer-events: none; transition: background-color .2s, border-color .2s, box-shadow .2s; }

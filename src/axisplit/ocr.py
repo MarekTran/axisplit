@@ -111,6 +111,10 @@ class Backend:
     def extract_total(self, image: Path) -> int | None:
         raise NotImplementedError
 
+    def text_extent(self, image: Path) -> Focus | None:
+        """Where the photo's text is (x, y, w, h), roughly the receipt; None if unknown."""
+        return None
+
 
 class StubBackend(Backend):
     """Explicit opt-in for isolated UI tests only, never the app default."""
@@ -226,6 +230,14 @@ class PaddleBackend(Backend):
             logger.warning("Decision model unavailable (%s); taking the total from the rules", e)
             return receipt_rules.parse(lines, width, height)["total_cents"]
 
+    def text_extent(self, image: Path) -> Focus | None:
+        lines, width, height = self._read(image, None)  # cached from the total's read
+        if not lines:
+            return None
+        xs, ys = [x for _, q in lines for x, _ in q], [y for _, q in lines for _, y in q]
+        x, y = float(min(xs)) / width, float(min(ys)) / height
+        return x, y, float(max(xs)) / width - x, float(max(ys)) / height - y
+
     def _pick_total(self, rows: list[tuple[str, int | None]], candidates: list[int]) -> int:
         """Index of the row the decision model chooses as the total, from text only."""
         letter = {i: LETTERS[k] for k, i in enumerate(candidates)}
@@ -312,3 +324,7 @@ def extract_items(image: Path, focus: Focus | None = None) -> list[ExtractedItem
 
 def extract_total(image: Path) -> int | None:
     return get_backend().extract_total(image)
+
+
+def text_extent(image: Path) -> Focus | None:
+    return get_backend().text_extent(image)

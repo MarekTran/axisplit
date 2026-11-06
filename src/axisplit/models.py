@@ -61,6 +61,11 @@ class Receipt(Base):
     focus_h: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Grand total as printed, read by a separate OCR call to cross-check the items.
     printed_total_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Where OCR found text on the whole photo (normalized 0..1): the board shows this part, the receipt.
+    view_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    view_y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    view_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    view_h: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     tab: Mapped[Tab] = relationship(back_populates="receipts")
     items: Mapped[list["Item"]] = relationship(back_populates="receipt", cascade="all, delete-orphan")
