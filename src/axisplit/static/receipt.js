@@ -236,7 +236,7 @@
   let drawing = null;  // { itemId, label } when redrawing, {} when adding a missing item
   let drewAt = 0;
   const draft = Object.assign(document.createElement("div"), { className: "box draft", hidden: true });
-  imgwrap.append(draft);
+  imgwrap.querySelector(".photo").append(draft);  // Boxes are placed in % of the whole photo.
   const manual = document.getElementById("manual-entry");
   function startDrawing(mode) {
     drawing = mode;

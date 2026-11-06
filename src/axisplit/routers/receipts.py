@@ -18,7 +18,7 @@ from ..images import image_digest
 from ..models import Confirmation, Item, Receipt, ReceiptStatus, TabMember
 from ..ops import add_item, apply_op, clamp_box, get_receipt_items, recompute_status
 from ..templ import templates
-from ..viewmodels import receipt_summary
+from ..viewmodels import photo_view, receipt_summary
 
 router = APIRouter(tags=["receipts"])
 logger = logging.getLogger(__name__)
@@ -64,6 +64,13 @@ async def detect_receipt(session: AsyncSession, receipt: Receipt) -> str:
         logger.error("Receipt total OCR failed for %s", receipt.id, exc_info=total)
     else:
         receipt.printed_total_cents = total
+    try:
+        extent = await asyncio.to_thread(ocr.text_extent, path)
+    except Exception:
+        logger.exception("Receipt text extent failed for %s", receipt.id)
+    else:
+        if extent:
+            receipt.view_x, receipt.view_y, receipt.view_w, receipt.view_h = extent
     if isinstance(extracted, Exception):
         logger.error("Receipt OCR failed for %s", receipt.id, exc_info=extracted)
         await session.commit()
@@ -172,9 +179,14 @@ async def receipt_page(receipt_id: str, request: Request, session: AsyncSession 
     confirmed = set(await session.scalars(
         select(Confirmation.username).where(Confirmation.receipt_id == receipt_id)
     ))
+    try:
+        with Image.open(UPLOAD_DIR / receipt.image_path) as im:  # reads the header only
+            view = photo_view(receipt, items, im.size)
+    except OSError:
+        view = None
     return templates.TemplateResponse(request, "receipt.html", {
         "tab": tab, "receipt": receipt, "items": items, "members": members, "who": who,
-        "colors": colors, "summary": receipt_summary(items, confirmed),
+        "colors": colors, "summary": receipt_summary(items, confirmed), "view": view,
     })
 
 

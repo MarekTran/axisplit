@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from axisplit import images, ocr
 from axisplit.db import get_session
 from axisplit.main import app
-from axisplit.models import Base, Confirmation, Receipt, TokenAssignment
+from axisplit.models import Base, Confirmation, Item, Receipt, TokenAssignment
 from axisplit.routers import receipts
+from axisplit.viewmodels import photo_view
 
 
 @pytest_asyncio.fixture
@@ -28,6 +29,7 @@ async def client(tmp_path, monkeypatch):
         ocr.ExtractedItem("Watermelon tea", 695, .2, .43, .6, .02),
     ])
     monkeypatch.setattr(ocr, "extract_total", lambda _: 1390)
+    monkeypatch.setattr(ocr, "text_extent", lambda _: (.15, .3, .7, .4))
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
@@ -228,3 +230,21 @@ async def test_redrawing_a_box_keeps_shares_and_confirmations(client):
     assert (round(second_after.y, 3), second_after.h) == (.53, .04)
     async with client.sessions() as session:
         assert len(list(await session.scalars(select(Confirmation)))) == 1
+
+
+async def test_board_shows_the_receipt_not_the_whole_photo(client):
+    _, receipt_id = await upload(client)
+    async with client.sessions() as session:
+        receipt = await session.get(Receipt, receipt_id)
+        assert (receipt.view_x, receipt.view_w) == (.15, .7)
+    page = await client.get(f"/r/{receipt_id}")
+    # Text at x .15-.85, y .3-.7, plus a .04 margin, on a 200 x 400 photo: 156 x 192 px of it shown.
+    assert 'class="imgwrap cropped"' in page.text and "aspect-ratio: 156 / 192" in page.text
+    assert "width: 128.205%; left: -14.103%; top: -54.167%" in page.text
+
+
+def test_photo_view_needs_something_to_show():
+    receipt = Receipt(image_path="x.jpg")
+    assert photo_view(receipt, [], (100, 100)) is None  # nothing detected: the whole photo, to draw on
+    item = Item(x=.02, y=.02, w=.96, h=.96)
+    assert photo_view(receipt, [item], (100, 100)) is None  # the receipt fills the photo

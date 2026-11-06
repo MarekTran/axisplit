@@ -39,7 +39,10 @@
 
   <div class="receipt-workspace">
     <div class="photo-column">
-      <div class="imgwrap" id="imgwrap" aria-label="Receipt photo with detected items">
+      <div class="imgwrap {{ 'cropped' if view }}" id="imgwrap" aria-label="Receipt photo with detected items"
+           {% if view %}style="aspect-ratio: {{ view.aspect }}"{% endif %}>
+        {# Boxes are in % of the whole photo: they sit in its layer, which the crop only scales and shifts. #}
+        <div class="photo" {% if view %}style="width: {{ view.width }}%; left: {{ view.left }}%; top: {{ view.top }}%"{% endif %}>
         <img src="/uploads/{{ receipt.image_path }}" alt="Receipt photograph. Numbered boxes correspond to the item list." draggable="false">
         {% for item in items %}
         <div class="box {{ 'assigned' if item.tokens else '' }}" data-item="{{ item.id }}"
@@ -54,6 +57,7 @@
           </span>
         </div>
         {% endfor %}
+        </div>
       </div>
       <details class="panel manual-entry" id="manual-entry"><summary>{{ icon("plus") }}Add a missing item</summary>
         <p class="muted">Drag across the line on the photo, then name it. Check the price on the receipt.</p>
@@ -71,5 +75,5 @@
 <div id="board-feedback" class="feedback-toast" role="status" aria-live="polite" hidden><span></span><button type="button" id="undo-token" hidden>Undo</button></div>
 <script src="/static/hit-test.js?v=3" defer></script>
 <script src="/static/drag-rect.js?v=1" defer></script>
-<script src="/static/receipt.js?v=7" defer></script>
+<script src="/static/receipt.js?v=8" defer></script>
 {% endblock %}
