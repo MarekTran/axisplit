@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 from axisplit import ocr, receipt_rules
-from axisplit.ocr import LocalVisionBackend, PaddleBackend
+from axisplit.ocr import HttpReader, LocalVisionBackend, PaddleBackend
 
 
 def test_real_request_and_box_conversion(tmp_path, monkeypatch):
@@ -134,7 +134,8 @@ class FakeOCR:
 
     def __call__(self, bgr):
         self.crops.append(bgr.shape)
-        (ox, oy), (h, w) = self.origin, bgr.shape[:2]
+        (h, w) = bgr.shape[:2]
+        ox, oy = (0, 0) if (h, w) == (2000, 1000) else self.origin  # a pass over the whole fixture photo
         inside = [(t, [[x - ox, y - oy] for x, y in q]) for t, q in self.lines]
         inside = [(t, q) for t, q in inside if all(0 <= x <= w and 0 <= y <= h for x, y in q)]
         return type("Result", (), {"txts": [t for t, _ in inside], "boxes": [q for _, q in inside] or None})()
@@ -146,14 +147,23 @@ def paddle(tmp_path, monkeypatch):
     Image.new("RGB", (1000, 2000), "white").save(image)
     backend, fake = PaddleBackend(), FakeOCR(RECEIPT)
     monkeypatch.setattr(backend, "_ocr", lambda: fake)
+    monkeypatch.setattr(httpx, "post", refuse)  # no decision model unless a test answers
     return backend, fake, image
+
+
+def refuse(url, **kwargs):
+    raise httpx.ConnectError("connection refused", request=httpx.Request("POST", url))
+
+
+def answer(json=None, text=None):
+    return lambda url, **kwargs: httpx.Response(200, request=httpx.Request("POST", url), json=json, text=text)
 
 
 def test_paddle_reads_the_focus_crop_and_maps_boxes_to_the_photo(paddle):
     backend, fake, image = paddle
     fake.origin = (50, 400)
-    beer, nachos = backend.extract_items(image, focus=(0.05, 0.2, 0.9, 0.08))  # the two item lines
-    assert fake.crops == [(160, 900, 3)]
+    beer, nachos = backend.read(image, ocr.corners((0.05, 0.2, 0.9, 0.08))).items  # the two item lines
+    assert fake.crops == [(2000, 1000, 3), (160, 900, 3)]  # the whole photo (for the total), then the area
     assert (beer.label, beer.price_cents, nachos.label, nachos.price_cents) == ("Beer", 450, "Nachos", 890)
     assert (beer.x, beer.y, round(beer.w, 4), round(beer.h, 4)) == (0.1, 0.205, 0.79, 0.015)
 
@@ -161,10 +171,12 @@ def test_paddle_reads_the_focus_crop_and_maps_boxes_to_the_photo(paddle):
 def test_paddle_leaves_out_lines_outside_a_tilted_area(paddle):
     backend, fake, image = paddle
     fake.origin = (50, 400)
-    # The crop still holds both rows; the area's bottom edge runs between them.
-    quad = [(0.05, 0.2), (0.95, 0.2), (0.95, 0.226), (0.05, 0.222)]
-    beer, = backend.extract_items(image, focus=(0.05, 0.2, 0.9, 0.08), quad=quad)
+    # A line below a tilted last item: inside the crop (the area's bounds), outside the area.
+    fake.lines = [RECEIPT[0], RECEIPT[1], ("Tip 2,00", box(100, 460, 280, 490))]
+    quad = [(0.05, 0.2), (0.95, 0.2), (0.95, 0.25), (0.05, 0.226)]
+    beer, = backend.read(image, quad).items
     assert (beer.label, beer.price_cents) == ("Beer", 450)
+    assert fake.crops[-1] == (100, 900, 3)  # the crop holds that line
 
 
 def test_decision_model_picks_the_total_from_the_amount_lines(paddle, monkeypatch):
@@ -179,7 +191,7 @@ def test_decision_model_picks_the_total_from_the_amount_lines(paddle, monkeypatc
                               json={"answers": {"total": {"choice": letter, "confidence": 0.9}}})
 
     monkeypatch.setattr(httpx, "post", respond)
-    assert backend.extract_total(image) == 1240
+    assert backend.read(image).total_cents == 1240
     assert sent["url"] == "http://127.0.0.1:8082/v1/systemone"
     question = sent["body"]["questions"]["total"]
     assert question["type"] == "choice" and question["instructions"] == ocr.DECIDE_TOTAL
@@ -203,28 +215,48 @@ def test_decision_server_elsewhere_with_a_model_name_and_key(paddle, monkeypatch
     monkeypatch.setenv("AXISPLIT_DECIDE_URL", "https://gpu-box:8000/v1/")
     monkeypatch.setenv("AXISPLIT_DECIDE_MODEL", "vllm-sr/d3-nano")
     monkeypatch.setenv("AXISPLIT_DECIDE_KEY", "s3cret")
-    assert backend.extract_total(image) == 1240
+    assert backend.read(image).total_cents == 1240
     assert sent == {"url": "https://gpu-box:8000/v1/systemone", "model": "vllm-sr/d3-nano",
                     "headers": {"Authorization": "Bearer s3cret"}}
 
 
-def test_rules_give_the_total_when_the_decision_model_is_down(paddle, monkeypatch):
+@pytest.mark.parametrize("respond", [
+    refuse,  # down
+    answer(json={"answers": {"total": {"choice": "Z"}}}),  # not one of the candidates
+    answer(json={"answers": {}}),
+    answer(text="<html>Bad gateway</html>"),
+], ids=["down", "unknown-letter", "no-answer", "not-json"])
+def test_rules_give_the_total_without_a_usable_decision(paddle, monkeypatch, caplog, respond):
     backend, _, image = paddle
-
-    def refuse(url, **kwargs):
-        raise httpx.ConnectError("connection refused", request=httpx.Request("POST", url))
-
-    monkeypatch.setattr(httpx, "post", refuse)
-    assert backend.extract_total(image) == 1240
+    monkeypatch.setattr(httpx, "post", respond)
+    assert backend.read(image).total_cents == 1240
+    assert "taking the total from the rules" in caplog.text
 
 
-def test_whole_photo_is_read_once_for_items_and_total(paddle, monkeypatch):
+def test_whole_photo_is_read_once_without_an_area(paddle, monkeypatch):
     backend, fake, image = paddle
-    monkeypatch.setattr(httpx, "post", lambda url, **kw: httpx.Response(
-        200, request=httpx.Request("POST", url), json={"answers": {"total": {"choice": "D"}}}))
-    assert len(backend.extract_items(image)) == 2
-    assert backend.extract_total(image) == 1240
+    monkeypatch.setattr(httpx, "post", answer(json={"answers": {"total": {"choice": "D"}}}))
+    reading = backend.read(image)
+    assert (len(reading.items), reading.total_cents) == (2, 1240)
+    assert [round(v, 6) for v in reading.extent] == [0.1, 0.205, 0.79, 0.19]  # the text's extent, to frame it
     assert fake.crops == [(2000, 1000, 3)]
+    assert backend.locate(image) == reading.extent
+
+
+def test_items_survive_their_optional_parts_failing(paddle, monkeypatch):
+    backend, fake, image = paddle
+    fake.origin = (50, 400)
+    area = ocr.corners((0.05, 0.2, 0.9, 0.08))
+    monkeypatch.setattr(backend, "_total", lambda *a: 1 / 0)
+    reading = backend.read(image, area)
+    assert len(reading.items) == 2 and reading.total_cents is None and reading.extent
+
+    whole_photo = backend._read
+    monkeypatch.setattr(backend, "_read", lambda image, focus: whole_photo(image, focus) if focus else 1 / 0)
+    reading = backend.read(image, area)  # the items come from the area's own pass
+    assert len(reading.items) == 2 and (reading.total_cents, reading.currency, reading.extent) == (None, None, None)
+    with pytest.raises(ZeroDivisionError):  # without an area the items needed that pass: the read fails
+        backend.read(image)
 
 
 def test_backend_choice(monkeypatch):
@@ -232,6 +264,92 @@ def test_backend_choice(monkeypatch):
     assert isinstance(ocr.get_backend(), PaddleBackend)
     monkeypatch.setenv("AXISPLIT_OCR_BACKEND", "vision")
     assert isinstance(ocr.get_backend(), LocalVisionBackend)
+    monkeypatch.setenv("AXISPLIT_OCR_BACKEND", "http")
+    assert isinstance(ocr.get_backend(), HttpReader)
     monkeypatch.setenv("AXISPLIT_OCR_BACKEND", "qwen")
     with pytest.raises(ValueError):
         ocr.get_backend()
+
+
+@pytest.fixture
+def reader(tmp_path, monkeypatch):
+    """The http reader against a fake service; `reader.reply` is its answer."""
+    image = tmp_path / "receipt.jpg"
+    Image.new("RGB", (600, 1000), "white").save(image)
+    monkeypatch.setenv("AXISPLIT_READER_URL", "http://reader:9000/")
+    sent = []
+
+    def post(url, **kwargs):
+        sent.append({"url": url, **kwargs, "image": kwargs["files"]["image"][1].read()})
+        return httpx.Response(200, request=httpx.Request("POST", url), json=reader.reply)
+
+    monkeypatch.setattr(httpx, "post", post)
+    reader = type("Reader", (), {"image": image, "sent": sent, "reply": None})
+    return reader
+
+
+def test_http_reader_sends_the_photo_and_area(reader, monkeypatch):
+    monkeypatch.setenv("AXISPLIT_READER_KEY", "s3cret")
+    monkeypatch.setenv("AXISPLIT_READER_TIMEOUT", "20")
+    reader.reply = {
+        "items": [
+            {"label": " Beer ", "price_cents": 450, "box": [0.1, 0.2, 0.5, 0.02]},
+            {"label": "Nachos", "price_cents": 890, "box": [0, 0, 0.1, 0.1],  # the quad wins
+             "quad": [[0.1, 0.25], [0.6, 0.24], [0.6, 0.26], [0.1, 0.27]]},
+        ],
+        "total_cents": 1340, "currency": "CZK", "extent": [0.05, 0.1, 0.9, 0.8], "version_note": "ignored",
+    }
+    area = ocr.corners((0.05, 0.2, 0.9, 0.1))
+    reading = HttpReader().read(reader.image, area)
+    beer, nachos = reading.items
+    assert (beer.label, beer.price_cents, beer.x, beer.w, beer.quad) == ("Beer", 450, 0.1, 0.5, None)
+    assert [round(v, 6) for v in (nachos.x, nachos.y, nachos.w, nachos.h)] == [0.1, 0.24, 0.5, 0.03]
+    assert (reading.total_cents, reading.currency, reading.extent) == (1340, "CZK", (0.05, 0.1, 0.9, 0.8))
+    sent, = reader.sent
+    assert sent["url"] == "http://reader:9000/v1/read"
+    assert sent["image"] == reader.image.read_bytes() and sent["files"]["image"][2] == "image/jpeg"
+    assert json.loads(sent["data"]["area"]) == [list(p) for p in area]
+    assert sent["headers"] == {"Authorization": "Bearer s3cret"} and sent["timeout"].read == 20
+
+
+def test_http_reader_minimal_reply_and_locate(reader):
+    reader.reply = {"items": []}
+    reading = HttpReader().read(reader.image)  # no area: no area field, no key: no header
+    assert reading == ocr.Reading([]) and reader.sent[0]["data"] is None and reader.sent[0]["headers"] is None
+    reader.reply = {"extent": [0.1, 0.1, 0.8, 0.8]}
+    assert HttpReader().locate(reader.image) == (0.1, 0.1, 0.8, 0.8)
+    assert reader.sent[-1]["url"] == "http://reader:9000/v1/locate"
+    reader.reply = {"extent": None}
+    assert HttpReader().locate(reader.image) is None
+
+
+@pytest.mark.parametrize("bad", [
+    {"items": [{"label": "Beer", "price_cents": -450, "box": [0.1, 0.2, 0.5, 0.02]}]},
+    {"items": [{"label": "Beer", "price_cents": 4.5, "box": [0.1, 0.2, 0.5, 0.02]}]},
+    {"items": [{"label": "Beer", "price_cents": "450", "box": [0.1, 0.2, 0.5, 0.02]}]},
+    {"items": [{"label": "  ", "price_cents": 450, "box": [0.1, 0.2, 0.5, 0.02]}]},
+    {"items": [{"label": "Beer", "price_cents": 450}]},  # no geometry
+    {"items": [{"label": "Beer", "price_cents": 450, "box": [0.6, 0.2, 0.5, 0.02]}]},  # past the right edge
+    {"items": [{"label": "Beer", "price_cents": 450, "box": [0.1, 0.2, 0, 0.02]}]},  # no width
+    {"items": [{"label": "Beer", "price_cents": 450, "box": [0.1, 0.2, 0.5]}]},
+    {"items": [{"label": "Beer", "price_cents": 450, "quad": [[0.1, 0.2], [0.5, 0.2], [1.5, 0.3]]}]},
+    {"items": [], "total_cents": 12.4},
+    {"items": [], "currency": "euro"},
+    {"items": [], "extent": [0, 0, 2, 1]},
+    {"total_cents": 1240},  # no items
+], ids=["negative-price", "fractional-cents", "string-price", "blank-label", "no-geometry", "outside",
+        "zero-width", "short-box", "bad-quad", "fractional-total", "currency-name", "extent-outside",
+        "no-items"])
+def test_http_reader_refuses_invalid_replies(reader, bad):
+    reader.reply = bad
+    with pytest.raises(ValueError):
+        HttpReader().read(reader.image)
+
+
+def test_http_reader_fails_on_errors_and_needs_a_url(reader, monkeypatch):
+    monkeypatch.setattr(httpx, "post", lambda url, **kw: httpx.Response(503, request=httpx.Request("POST", url)))
+    with pytest.raises(httpx.HTTPStatusError):
+        HttpReader().read(reader.image)
+    monkeypatch.delenv("AXISPLIT_READER_URL")
+    with pytest.raises(ValueError, match="AXISPLIT_READER_URL"):
+        HttpReader().read(reader.image)
