@@ -14,7 +14,7 @@ from axisplit.db import get_session
 from axisplit.main import app
 from axisplit.models import Base, Confirmation, Item, Receipt, TokenAssignment
 from axisplit.routers import receipts
-from axisplit.viewmodels import photo_view
+from axisplit.viewmodels import money, money_by_currency, photo_view
 
 
 @pytest_asyncio.fixture
@@ -30,6 +30,7 @@ async def client(tmp_path, monkeypatch):
     ])
     monkeypatch.setattr(ocr, "extract_total", lambda _: 1390)
     monkeypatch.setattr(ocr, "text_extent", lambda _: (.15, .3, .7, .4))
+    monkeypatch.setattr(ocr, "currency", lambda _: None)  # unread: the tab's last receipt's, else EUR
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
@@ -52,9 +53,9 @@ async def client(tmp_path, monkeypatch):
         await engine.dispose()
 
 
-def photo():
+def photo(color="white"):
     buffer = io.BytesIO()
-    Image.new("RGB", (200, 400), "white").save(buffer, format="JPEG")
+    Image.new("RGB", (200, 400), color).save(buffer, format="JPEG")
     return buffer.getvalue()
 
 
@@ -101,7 +102,7 @@ async def test_confirmation_requires_all_items_assigned(client):
     confirmed = await op(client, receipt_id, "confirm")
     assert confirmed.json()["status"] == "settled"
     review = await client.get(f"/r/{receipt_id}/review")
-    assert "You agreed to your 13,90 € share" in review.text
+    assert "You agreed to your 13,90\u00a0€ share" in review.text
     assert "Withdraw my confirmation" in review.text
     await op(client, receipt_id, "unplace", item_id=second.id, username="Adam")
     review = await client.get(f"/r/{receipt_id}/review")
@@ -117,13 +118,13 @@ async def test_remove_and_undo_preserves_tokens_and_confirmations(client):
     removed = await client.post(f"/r/{receipt_id}/remove")
     assert removed.status_code == 200
     assert "Undo removal" in removed.text
-    assert "0,00 €" in removed.text
+    assert "0,00\u00a0€" in removed.text
     assert 'class="receipt-card ' not in removed.text
     blocked = await op(client, receipt_id, "confirm")
     assert blocked.status_code == 410
     restored = await client.post(f"/r/{receipt_id}/restore")
     assert "Receipt restored" in restored.text
-    assert "13,90 €" in restored.text
+    assert "13,90\u00a0€" in restored.text
     async with client.sessions() as session:
         receipt = await session.get(Receipt, receipt_id)
         assert receipt.status == "settled"
@@ -147,8 +148,8 @@ async def test_tab_totals_distinguish_assigned_from_unassigned(client):
     await op(client, receipt_id, "place", item_id=first.id, username="Adam")
     page = await client.get(f"/t/{tab_id}")
     assert "Receipt totals" in page.text
-    assert "13,90 €" in page.text
-    assert "6,95 €" in page.text
+    assert "13,90\u00a0€" in page.text
+    assert "6,95\u00a0€" in page.text
     assert "not a payment or transfer balance" in page.text.lower()
     assert "owes / gets back" not in page.text
 
@@ -161,7 +162,7 @@ async def test_extra_tokens_weight_the_split_and_come_off_one_at_a_time(client):
     for name in ["Marek"] * 5 + ["Adam", "Nina"]:  # Marek had most of the 6,95 € tea
         await op(client, receipt_id, "place", item_id=first.id, username=name)
     review = await client.get(f"/r/{receipt_id}/review")
-    assert "4,97 €" in review.text and "0,99 €" in review.text
+    assert "4,97\u00a0€" in review.text and "0,99\u00a0€" in review.text
     assert "×5" in review.text
 
     await op(client, receipt_id, "unplace", item_id=first.id, username="Marek")
@@ -173,7 +174,7 @@ async def test_extra_tokens_weight_the_split_and_come_off_one_at_a_time(client):
         counts = {t.username: t.count for t in await session.scalars(select(TokenAssignment))}
     assert counts == {"Marek": 3, "Nina": 1}
     review = await client.get(f"/r/{receipt_id}/review")
-    assert "5,21 €" in review.text and "1,74 €" in review.text
+    assert "5,21\u00a0€" in review.text and "1,74\u00a0€" in review.text
 
 
 async def test_a_token_sits_where_it_was_tapped(client):
@@ -223,7 +224,7 @@ async def test_printed_total_flags_a_missing_item(client, monkeypatch):
     _, receipt_id = await upload(client)
     assert client.focus == [None]  # no focus drawn: whole photo
     review = await client.get(f"/r/{receipt_id}/review")
-    assert "Items add up to 13,90 €" in review.text and "6,10 € missing" in review.text
+    assert "Items add up to 13,90\u00a0€" in review.text and "6,10\u00a0€ missing" in review.text
     await client.post(f"/r/{receipt_id}/items", data={"label": "Cake", "price": "6,10",
                                                        "x": ".5", "y": ".6", "w": ".5", "h": ".04"})
     review = await client.get(f"/r/{receipt_id}/review")
@@ -263,3 +264,27 @@ def test_photo_view_needs_something_to_show():
     assert photo_view(receipt, [], (100, 100)) is None  # nothing detected: the whole photo, to draw on
     item = Item(x=.02, y=.02, w=.96, h=.96)
     assert photo_view(receipt, [item], (100, 100)) is None  # the receipt fills the photo
+
+
+def test_money_is_written_the_local_way():
+    assert money(103500, "CZK") == "1\u00a0035,00\u00a0Kč"
+    assert money(-50) == "-0,50\u00a0€"
+    assert money(1250, "GBP") == "£12,50"
+    assert money_by_currency({"CZK": 103500, "EUR": 0}) == "1\u00a0035,00\u00a0Kč"
+    assert money_by_currency({}, "CZK") == "0,00\u00a0Kč"
+
+
+async def test_currency_is_read_inherited_fixable_and_never_summed_across(client, monkeypatch):
+    monkeypatch.setattr(ocr, "currency", lambda _: "CZK")
+    tab_id, first = await upload(client)
+    page = await client.get(f"/r/{first}")
+    assert "6,95\u00a0Kč" in page.text and "Price (Kč)" in page.text and "\u00a0€" not in page.text  # no amount in euros (the picker still lists EUR)
+    monkeypatch.setattr(ocr, "currency", lambda _: None)  # unread: the tab's last receipt's
+    second = (await client.post(f"/t/{tab_id}/receipts", files={"image": ("b.jpg", photo("gray"), "image/jpeg")})).url.path.rsplit("/", 1)[-1]
+    async with client.sessions() as session:
+        assert (await session.get(Receipt, second)).currency == "CZK"
+    page = await client.post(f"/r/{second}/currency", data={"currency": "EUR"})
+    assert "6,95\u00a0€" in page.text
+    assert (await client.post(f"/r/{second}/currency", data={"currency": "XYZ"})).status_code == 422
+    tab = await client.get(f"/t/{tab_id}")
+    assert "13,90\u00a0Kč + 13,90\u00a0€" in tab.text  # two currencies, two sums

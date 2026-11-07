@@ -7,7 +7,11 @@
      data-colors='{{ colors | tojson }}'>
   <a href="/t/{{ tab.id }}" class="back-link">{{ icon("arrow-left") }}{{ tab.name }}</a>
   <div class="page-head">
-    <div><h1>{{ receipt.created_at | receipt_date }}</h1><p class="muted">Receipt added by {{ receipt.uploaded_by }} · {{ items | length }} items</p></div>
+    <div><h1>{{ receipt.created_at | receipt_date }}</h1><p class="muted">Receipt added by {{ receipt.uploaded_by }} · {{ items | length }} items</p>
+      {# Read off the photo; a wrong or unread one is fixed here. #}
+      <form method="post" action="/r/{{ receipt.id }}/currency" class="currency-form"><label>Prices in
+        <select name="currency" onchange="this.form.requestSubmit()">{% for code in currencies %}<option value="{{ code }}" {{ 'selected' if code == receipt.currency }}>{{ code }} ({{ code | currency_sign }})</option>{% endfor %}</select></label>
+        <noscript><button class="secondary">Save</button></noscript></form></div>
     <span class="badge {{ receipt.status }}" id="status">{{ receipt.status | status_label }}</span>
   </div>
   {% if request.query_params.get('duplicate') %}
@@ -48,7 +52,7 @@
         <div class="box {{ 'assigned' if item.tokens else '' }}" data-item="{{ item.id }}"
              style="left: {{ item.x * 100 }}%; top: {{ item.y * 100 }}%; width: {{ item.w * 100 }}%; height: {{ item.h * 100 }}%">
           <span class="box-number">{{ loop.index }}</span>
-          <span class="lbl">{{ item.label }} — {{ item.price_cents | eur }}</span>
+          <span class="lbl">{{ item.label }} — {{ item.price_cents | money(receipt.currency) }}</span>
           <span class="tokens">
           {% for t in item.tokens | sort(attribute='username') %}
             <button type="button" class="pip" data-user="{{ t.username }}" style="--c: {{ colors.get(t.username, '#888') }}{% if t.spot is not none %}; left: {{ t.spot * 100 }}%{% endif %}"
@@ -66,7 +70,7 @@
         <form method="post" action="/r/{{ receipt.id }}/items" class="manual-form">
           {% for key in ("x", "y", "w", "h") %}<input type="hidden" name="{{ key }}" disabled>{% endfor %}
           <label class="manual-name">Item name<input name="label" placeholder="As printed on the receipt" required maxlength="120"></label>
-          <label class="manual-price">Price (€)<input name="price" placeholder="2,10" required inputmode="decimal"></label>
+          <label class="manual-price">Price ({{ receipt.currency | currency_sign }})<input name="price" placeholder="2,10" required inputmode="decimal"></label>
           <button>{{ icon("plus") }}Add item</button>
         </form>
       </details>

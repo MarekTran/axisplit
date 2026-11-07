@@ -1,17 +1,17 @@
 {% from "_icons.html" import icon %}
 <section id="review" class="review-panel" data-status="{{ receipt.status }}" data-status-label="{{ receipt.status | status_label }}" aria-label="Items and shares">
-  <div class="review-head"><h2>Items</h2><span class="muted">{{ summary.assigned_count }}/{{ summary.item_count }} assigned{% if summary.unassigned_count %} · {{ summary.unassigned_total | eur }} left{% endif %}</span></div>
+  <div class="review-head"><h2>Items</h2><span class="muted">{{ summary.assigned_count }}/{{ summary.item_count }} assigned{% if summary.unassigned_count %} · {{ summary.unassigned_total | money(receipt.currency) }} left{% endif %}</span></div>
   <progress value="{{ summary.assigned_count }}" max="{{ summary.item_count or 1 }}" aria-label="Items assigned"></progress>
   {% if items and receipt.printed_total_cents is not none %}{% set gap = receipt.printed_total_cents - summary.total %}
-    {% if gap == 0 %}<p class="total-check">✓ Items match the receipt total, {{ receipt.printed_total_cents | eur }}.</p>
-    {% else %}<p class="notice warning compact total-check">Items add up to {{ summary.total | eur }}, but the receipt total reads {{ receipt.printed_total_cents | eur }}: {{ gap | abs | eur }} {{ 'missing' if gap > 0 else 'too much' }}. Check the photo for a missed line or a misread price.</p>{% endif %}
+    {% if gap == 0 %}<p class="total-check">✓ Items match the receipt total, {{ receipt.printed_total_cents | money(receipt.currency) }}.</p>
+    {% else %}<p class="notice warning compact total-check">Items add up to {{ summary.total | money(receipt.currency) }}, but the receipt total reads {{ receipt.printed_total_cents | money(receipt.currency) }}: {{ gap | abs | money(receipt.currency) }} {{ 'missing' if gap > 0 else 'too much' }}. Check the photo for a missed line or a misread price.</p>{% endif %}
   {% endif %}
 
   <ol class="item-review">
   {% for item in items %}
     <li data-item="{{ item.id }}" class="{{ 'assigned' if item.tokens else 'unassigned' }}">
       <button class="item-jump" type="button" data-jump="{{ item.id }}" aria-label="Find {{ item.label }} on the photo">{{ loop.index }}</button>
-      <button class="item-add" type="button" data-add="{{ item.id }}"><strong>{{ item.label }}</strong><span class="amount">{{ item.price_cents | eur }}</span></button>
+      <button class="item-add" type="button" data-add="{{ item.id }}"><strong>{{ item.label }}</strong><span class="amount">{{ item.price_cents | money(receipt.currency) }}</span></button>
       <div class="holders">
       {% for t in item.tokens | sort(attribute='username') %}
         <button type="button" class="holder" data-item="{{ item.id }}" data-user="{{ t.username }}" data-count="{{ t.count }}" data-spot="{{ t.spot if t.spot is not none else '' }}" style="--c: {{ colors.get(t.username, '#888') }}"
@@ -26,20 +26,20 @@
   </ol>
 
   {% if items %}
-  <div class="review-head"><h2>Shares</h2><strong class="amount total">{{ summary.total | eur }}</strong></div>
+  <div class="review-head"><h2>Shares</h2><strong class="amount total">{{ summary.total | money(receipt.currency) }}</strong></div>
   <ul class="share-list confirmations panel">
   {% for m in members %}
     <li style="--c: {{ m.color }}"><div class="person"><span class="avatar" aria-hidden="true">{{ m.username[:1] }}</span><div>{{ m.username }}{% if m.username == who %}<small class="you-tag">you</small>{% endif %}
       <small class="confirmation-state {{ 'agreed' if m.username in summary.confirmed else '' }}">{% if m.username in summary.confirmed %}✓ Agreed{% elif m.username in summary.totals %}Not confirmed yet{% else %}No items{% endif %}</small></div></div>
-      <strong class="amount">{{ summary.totals.get(m.username, 0) | eur }}</strong></li>
+      <strong class="amount">{{ summary.totals.get(m.username, 0) | money(receipt.currency) }}</strong></li>
   {% endfor %}
   </ul>
   <div class="confirmation-action">
   {% if who in summary.confirmed %}
-    <p class="notice success compact">✓ You agreed to your {{ summary.totals.get(who, 0) | eur }} share.</p>
+    <p class="notice success compact">✓ You agreed to your {{ summary.totals.get(who, 0) | money(receipt.currency) }} share.</p>
     <button id="confirm-btn" type="button" class="secondary large" data-confirm="unconfirm">Withdraw my confirmation</button>
   {% else %}
-    <button id="confirm-btn" type="button" class="large" data-confirm="confirm" {% if not summary.complete or who not in summary.totals %}disabled{% endif %}>{{ icon("check") }}Confirm my {{ summary.totals.get(who, 0) | eur }} share</button>
+    <button id="confirm-btn" type="button" class="large" data-confirm="confirm" {% if not summary.complete or who not in summary.totals %}disabled{% endif %}>{{ icon("check") }}Confirm my {{ summary.totals.get(who, 0) | money(receipt.currency) }} share</button>
   {% endif %}
   <p class="muted" id="confirmed">
     {% if not summary.complete %}Assign every item before confirming.

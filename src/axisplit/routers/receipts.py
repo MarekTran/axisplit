@@ -19,7 +19,7 @@ from ..models import Confirmation, Item, Receipt, ReceiptStatus, TabMember
 from ..ops import (add_item, apply_op, clamp_box, drop_confirmations, get_receipt_items, parse_cents,
                    recompute_status)
 from ..templ import templates
-from ..viewmodels import photo_view, receipt_summary
+from ..viewmodels import CURRENCIES, photo_view, receipt_summary
 
 router = APIRouter(tags=["receipts"])
 logger = logging.getLogger(__name__)
@@ -67,11 +67,14 @@ async def detect_receipt(session: AsyncSession, receipt: Receipt) -> str:
         receipt.printed_total_cents = total
     try:
         extent = await asyncio.to_thread(ocr.text_extent, path)
+        code = await asyncio.to_thread(ocr.currency, path)
     except Exception:
-        logger.exception("Receipt text extent failed for %s", receipt.id)
+        logger.exception("Receipt text extent or currency failed for %s", receipt.id)
     else:
         if extent:
             receipt.view_x, receipt.view_y, receipt.view_w, receipt.view_h = extent
+        if code in CURRENCIES:  # else it keeps the tab's last receipt's (see upload_receipt)
+            receipt.currency = code
     if isinstance(extracted, Exception):
         logger.error("Receipt OCR failed for %s", receipt.id, exc_info=extracted)
         await session.commit()
@@ -137,8 +140,9 @@ async def upload_receipt(
             return RedirectResponse(f"/r/{existing.id}?duplicate=1", 303)
     quad = clean_quad(focus_quad)
     focus = clean_focus(*quad_bounds(quad)) if quad else clean_focus(focus_x, focus_y, focus_w, focus_h)
+    # Unread from the photo, the currency is most likely the one of the tab's last receipt.
     receipt = Receipt(id=rid, tab_id=tab.id, uploaded_by=member.username, image_path=dest.name,
-                      title=image.filename or "Receipt")
+                      title=image.filename or "Receipt", currency=previous[-1].currency if previous else "EUR")
     if focus:
         receipt.focus_x, receipt.focus_y, receipt.focus_w, receipt.focus_h = focus
         receipt.focus_quad = json.dumps(quad) if quad else None
@@ -235,6 +239,22 @@ async def restore_receipt(receipt_id: str, request: Request,
         await recompute_status(session, receipt)
         await session.commit()
     return RedirectResponse(f"/t/{tab.id}?restored=1", 303)
+
+
+@router.post("/r/{receipt_id}/currency")
+async def set_currency(receipt_id: str, request: Request, currency: str = Form(...),
+                       session: AsyncSession = Depends(get_session)):
+    """Fixes a currency read wrong (or not at all) off the photo. Amounts stay as they are."""
+    tab = await _tab_for_receipt(session, receipt_id)
+    await require_member(tab.id, request, session)
+    if currency not in CURRENCIES:
+        raise HTTPException(422, f"unsupported currency {currency!r}")
+    receipt = await session.get(Receipt, receipt_id)
+    receipt.currency = currency
+    await session.commit()
+    from ..realtime import hub
+    await hub.broadcast(receipt_id, {"type": "currency", "currency": currency})  # peers refresh the review
+    return RedirectResponse(f"/r/{receipt_id}", 303)
 
 
 @router.post("/r/{receipt_id}/items")

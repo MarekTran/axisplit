@@ -249,3 +249,31 @@ def amount_rows(lines, width, height):
             value = amounts(r["text"])[-1]
         out.append((r["text"], value))
     return out
+
+
+# Currency signs and codes as OCR reads them; the most frequent one on the receipt wins.
+CURRENCY_MARKS = {
+    "CZK": re.compile(rf"(?<!\w){CZK}(?!\w)"),
+    "EUR": re.compile(r"€|(?<!\w)EUR(?!\w)"),
+    "PLN": re.compile(r"(?<!\w)(?:zł|PLN)(?!\w)"),
+    "HUF": re.compile(r"(?<!\w)HUF(?!\w)|\d\s?Ft(?!\w)"),
+    "CHF": re.compile(r"(?<!\w)CHF(?!\w)"),
+    "GBP": re.compile(r"£|(?<!\w)GBP(?!\w)"),
+    "USD": re.compile(r"\$|(?<!\w)USD(?!\w)"),
+}
+
+
+# Without a sign, the shop's VAT ID says the country ("DIČ CZ04973771", "IČ DPH: SK2020...").
+VAT_ID = re.compile(r"(?<![A-Z])(CZ|SK|AT|DE|NL|BE|FR|IT|ES|PT|IE|FI|SI|HR|EE|LV|LT|LU|GR|PL|HU)\d{8,12}(?!\d)")
+VAT_CURRENCY = {"CZ": "CZK", "PL": "PLN", "HU": "HUF"}  # the rest of that list uses the euro
+
+
+def currency(lines):
+    """lines: [(text, quad)] -> ISO code of the currency printed most often, else the one of the
+    country in the shop's VAT ID; None if neither (or a tie)."""
+    counts = {code: sum(len(mark.findall(t)) for t, _ in lines) for code, mark in CURRENCY_MARKS.items()}
+    ranked = sorted(counts.items(), key=lambda kv: -kv[1])
+    if ranked[0][1] and ranked[0][1] != ranked[1][1]:
+        return ranked[0][0]
+    countries = {VAT_CURRENCY.get(m, "EUR") for t, _ in lines for m in VAT_ID.findall(t.replace(" ", ""))}
+    return countries.pop() if len(countries) == 1 else None

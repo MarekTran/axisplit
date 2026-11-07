@@ -419,3 +419,8 @@ li.unassigned .item-jump { --btn-bg: var(--box-open); --btn-fg: var(--box-open-i
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+/* The receipt's currency: a quiet control under its heading. */
+.currency-form { margin: .35rem 0 0; }
+.currency-form label { display: inline-flex; align-items: center; gap: .45rem; color: var(--text-2); font-size: .84rem; font-weight: 500; }
+.currency-form select { min-height: 36px; padding: .2rem .5rem; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--surface); color: var(--text); font: inherit; font-size: 16px; }
