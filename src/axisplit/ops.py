@@ -9,33 +9,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import new_id
-from .models import Confirmation, Item, Receipt, ReceiptStatus, Tab, TokenAssignment
+from .models import Item, Person, Receipt, ReceiptStatus, TokenAssignment
+from .split import agreed, totals
 
 
 async def recompute_status(session: AsyncSession, receipt: Receipt) -> str:
     items = await get_receipt_items(session, receipt.id)
-    has_tokens = any(i.tokens for i in items)
-    involved = involved_users(items)
-    confirmed = {c.username for c in (await session.scalars(
-        select(Confirmation).where(Confirmation.receipt_id == receipt.id)))}
+    shares = totals(items)
     if not items:
         status = ReceiptStatus.AWAITING_ITEMS
-    elif not has_tokens:
+    elif not shares:
         status = ReceiptStatus.AWAITING_TOKENS
-    elif all(i.tokens for i in items) and involved and involved <= confirmed:
-        status = ReceiptStatus.SETTLED
-    elif confirmed and all(i.tokens for i in items):
-        status = ReceiptStatus.PENDING_CONFIRM
-    else:
+    elif not all(i.tokens for i in items):
         status = ReceiptStatus.SPLITTING
+    elif set(shares) <= agreed(await get_people(session, receipt.id), shares):
+        status = ReceiptStatus.SETTLED
+    else:
+        status = ReceiptStatus.PENDING_CONFIRM
     if status.value != receipt.status:
         receipt.status = status.value
         await session.commit()
     return status.value
 
 
-def involved_users(items: list[Item]) -> set[str]:
-    return {t.username for i in items for t in i.tokens}
+async def get_people(session: AsyncSession, receipt_id: str) -> list[Person]:
+    return list(await session.scalars(
+        select(Person).where(Person.receipt_id == receipt_id).order_by(Person.added_at)))
 
 
 async def get_receipt_items(session: AsyncSession, receipt_id: str) -> list[Item]:
@@ -48,20 +47,18 @@ async def get_receipt_items(session: AsyncSession, receipt_id: str) -> list[Item
     return list(await session.scalars(stmt))
 
 
-async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -> dict:
-    """Validate & apply one client op. Returns the event to broadcast."""
-    kind = op.get("op")
-    actor = op.get("actor")
-    receipt = await session.get(Receipt, receipt_id)
-    if receipt is None or receipt.tab_id != tab.id:
-        raise HTTPException(404, "receipt not found")
-    if receipt.status == ReceiptStatus.REMOVED:
-        raise HTTPException(410, "This receipt was removed. Restore it from the tab to edit it.")
+async def apply_op(session: AsyncSession, receipt: Receipt, op: dict) -> dict:
+    """Validate & apply one client op, for any person on the receipt. Returns the event to broadcast."""
+    kind, receipt_id = op.get("op"), receipt.id
+    if kind not in ("place", "unplace", "confirm", "unconfirm"):
+        raise HTTPException(422, f"unknown op {kind!r}")
+    person = await session.get(Person, (receipt_id, op.get("username") or ""))
+    if person is None:
+        raise HTTPException(404, "Add this person to the receipt first.")
+    target = person.username
 
     if kind in ("place", "unplace"):
-        item_id, target = op.get("item_id"), op.get("username")
-        if not (target or "").strip():
-            raise HTTPException(422, "username required")
+        item_id = op.get("item_id")
         item = await session.get(Item, item_id)
         if item is None or item.receipt_id != receipt_id or item.deleted:
             raise HTTPException(404, "item not found")
@@ -80,37 +77,17 @@ async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -
             taken = await session.execute(update(TokenAssignment).where(
                 *match, TokenAssignment.count > 1).values(count=TokenAssignment.count - 1))
             if not taken.rowcount and not (await session.execute(delete(TokenAssignment).where(*match))).rowcount:
-                return {"type": kind, "item_id": item_id, "username": target,
-                        "status": receipt.status}  # no-op: don't disturb confirmations
-        await session.commit()
-        # spec §3: moving tokens invalidates previous confirmations
-        for c in await session.scalars(select(Confirmation).where(Confirmation.receipt_id == receipt_id)):
-            await session.delete(c)
+                return {"type": kind, "item_id": item_id, "username": target, "status": receipt.status}  # no-op
         await session.commit()
         status = await recompute_status(session, receipt)
         return {"type": kind, "item_id": item_id, "username": target, "status": status}
 
-    if kind == "confirm":
-        items = await get_receipt_items(session, receipt_id)
-        if not items or any(not i.tokens for i in items):
-            raise HTTPException(409, "Assign every item before confirming the split.")
-        if actor not in involved_users(items):
-            raise HTTPException(409, "You have no assigned items to confirm yet.")
-        if await session.get(Confirmation, (receipt_id, actor)) is None:
-            session.add(Confirmation(receipt_id=receipt_id, username=actor))
-            await session.commit()
-        status = await recompute_status(session, receipt)
-        return {"type": "confirm", "username": actor, "status": status}
-
-    if kind == "unconfirm":
-        c = await session.get(Confirmation, (receipt_id, actor))
-        if c is not None:
-            await session.delete(c)
-            await session.commit()
-        status = await recompute_status(session, receipt)
-        return {"type": "unconfirm", "username": actor, "status": status}
-
-    raise HTTPException(422, f"unknown op {kind!r}")
+    # Ticked off at the share they have now, or unticked. Optional: nothing waits for it.
+    shares = totals(await get_receipt_items(session, receipt_id))
+    person.agreed_cents = shares.get(target, 0) if kind == "confirm" else None
+    await session.commit()
+    status = await recompute_status(session, receipt)
+    return {"type": kind, "username": target, "status": status}
 
 
 def clamp_box(x: float, y: float, w: float, h: float) -> dict[str, float]:
@@ -126,10 +103,6 @@ async def add_item(session: AsyncSession, receipt: Receipt, label: str, price_ce
         bbox = (0.03, min(0.9, 0.05 + count * 0.12), 0.9, 0.1)
     item = Item(id=new_id(), receipt_id=receipt.id, label=label, price_cents=price_cents, **clamp_box(*bbox))
     session.add(item)
-    for confirmation in await session.scalars(
-        select(Confirmation).where(Confirmation.receipt_id == receipt.id)
-    ):
-        await session.delete(confirmation)
     await session.commit()
     await recompute_status(session, receipt)
     return item
@@ -142,8 +115,3 @@ def parse_cents(price: str) -> int:
         mark = max(text.rfind(","), text.rfind("."))
         text = re.sub(r"[,.]", "", text[:mark]) + "." + text[mark + 1:]
     return round(float(text.replace(",", ".")) * 100)
-
-
-async def drop_confirmations(session: AsyncSession, receipt_id: str) -> None:
-    """Shares changed, so what people agreed to no longer holds."""
-    await session.execute(delete(Confirmation).where(Confirmation.receipt_id == receipt_id))

@@ -13,42 +13,19 @@ class Base(DeclarativeBase):
     pass
 
 
-class Tab(Base):
-    __tablename__ = "tabs"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str] = mapped_column(String)
-    invite_secret: Mapped[str] = mapped_column(String, default=lambda: _rand(12))
-    created_by: Mapped[str] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    members: Mapped[list["TabMember"]] = relationship(back_populates="tab", cascade="all, delete-orphan")
-    receipts: Mapped[list["Receipt"]] = relationship(back_populates="tab", cascade="all, delete-orphan")
-
-
-class TabMember(Base):
-    __tablename__ = "tab_members"
-    tab_id: Mapped[str] = mapped_column(ForeignKey("tabs.id"), primary_key=True)
-    username: Mapped[str] = mapped_column(String, primary_key=True)
-    color: Mapped[str] = mapped_column(String)
-    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    tab: Mapped[Tab] = relationship(back_populates="members")
-
-
 class ReceiptStatus(str, enum.Enum):
     AWAITING_ITEMS = "awaiting_items"      # no items yet; OCR failed/pending/manual
     AWAITING_TOKENS = "awaiting_tokens"    # items exist, nobody placed tokens
-    SPLITTING = "splitting"                # tokens placed, not all confirmed
-    PENDING_CONFIRM = "pending_confirm"    # someone confirmed
-    SETTLED = "settled"                    # all involved confirmed
-    REMOVED = "removed"                    # reversible removal; assignments retained
+    SPLITTING = "splitting"                # tokens placed, some items still unassigned
+    PENDING_CONFIRM = "pending_confirm"    # every item assigned; not everyone ticked off yet
+    SETTLED = "settled"                    # everyone with a share is ticked off at that share
 
 
 class Receipt(Base):
+    """One split. Its id is the link: anyone who has it can do everything on it."""
+
     __tablename__ = "receipts"
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    tab_id: Mapped[str] = mapped_column(ForeignKey("tabs.id"))
-    uploaded_by: Mapped[str] = mapped_column(String)
     image_path: Mapped[str] = mapped_column(String)  # path under /uploads
     title: Mapped[str] = mapped_column(String, default="Receipt")
     currency: Mapped[str] = mapped_column(String, default="EUR")
@@ -69,9 +46,21 @@ class Receipt(Base):
     view_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     view_h: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    tab: Mapped[Tab] = relationship(back_populates="receipts")
     items: Mapped[list["Item"]] = relationship(back_populates="receipt", cascade="all, delete-orphan")
-    confirmations: Mapped[list["Confirmation"]] = relationship(cascade="all, delete-orphan")
+    people: Mapped[list["Person"]] = relationship(cascade="all, delete-orphan", order_by="Person.added_at")
+
+
+class Person(Base):
+    """Someone splitting a receipt, added by name on it. Their tokens carry the same name."""
+
+    __tablename__ = "people"
+    receipt_id: Mapped[str] = mapped_column(ForeignKey("receipts.id"), primary_key=True)
+    username: Mapped[str] = mapped_column(String, primary_key=True)
+    color: Mapped[str] = mapped_column(String)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Ticked off: the share they agreed to when asked. The tick holds while their share is still this,
+    # so a change that moves their amount unticks only them, and undoing it ticks them again.
+    agreed_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Item(Base):
@@ -105,16 +94,3 @@ class TokenAssignment(Base):
     # Where along the item's box this person's token sits, 0..1 from its left: where they last tapped.
     # None (placed from the item list) keeps it at the box's right end.
     spot: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-
-class Confirmation(Base):
-    __tablename__ = "confirmations"
-    receipt_id: Mapped[str] = mapped_column(ForeignKey("receipts.id"), primary_key=True)
-    username: Mapped[str] = mapped_column(String, primary_key=True)
-    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-def _rand(n: int) -> str:
-    import secrets
-
-    return secrets.token_urlsafe(n)[:n]

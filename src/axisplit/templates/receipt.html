@@ -1,22 +1,20 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
-{% block title %}Split receipt — {{ tab.name }}{% endblock %}
+{% block title %}Split receipt — axisplit{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<div id="board" data-receipt="{{ receipt.id }}" data-tab="{{ tab.id }}" data-who="{{ who }}"
-     data-colors='{{ colors | tojson }}'>
-  <a href="/t/{{ tab.id }}" class="back-link">{{ icon("arrow-left") }}{{ tab.name }}</a>
+<div id="board" data-receipt="{{ receipt.id }}" data-colors='{{ colors | tojson }}'>
+  <a href="/" class="back-link">{{ icon("arrow-left") }}All splits</a>
   <div class="page-head">
-    <div><h1>{{ receipt.created_at | receipt_date }}</h1><p class="muted">Receipt added by {{ receipt.uploaded_by }} · {{ items | length }} items</p>
+    <div><h1>{{ receipt.created_at | receipt_date }}</h1><p class="muted">{{ items | length }} items</p>
       {# Read off the photo; a wrong or unread one is fixed here. #}
       <form method="post" action="/r/{{ receipt.id }}/currency" class="currency-form"><label>Prices in
         <select name="currency" onchange="this.form.requestSubmit()">{% for code in currencies %}<option value="{{ code }}" {{ 'selected' if code == receipt.currency }}>{{ code }} ({{ code | currency_sign }})</option>{% endfor %}</select></label>
         <noscript><button class="secondary">Save</button></noscript></form></div>
-    <span class="badge {{ receipt.status }}" id="status">{{ receipt.status | status_label }}</span>
+    <div class="head-actions"><span class="badge {{ receipt.status }}" id="status">{{ receipt.status | status_label }}</span>
+      {# The link is the only key: whoever has it can do everything here. #}
+      <button type="button" class="secondary small" data-share>{{ icon("link") }}Share link</button></div>
   </div>
-  {% if request.query_params.get('duplicate') %}
-  <div class="notice warning" role="status"><div class="notice-body">{{ icon("alert") }}<div><strong>This photo is already in the tab.</strong><br>We opened the existing receipt instead of charging everyone twice.</div></div></div>
-  {% endif %}
 
   {% if not items %}
   <section class="notice warning detect-notice" role="status"><div class="notice-body">{{ icon("sparkles") }}<div>
@@ -30,14 +28,14 @@
     <form method="post" action="/r/{{ receipt.id }}/detect" data-busy="Finding items…"><button>{{ icon("sparkles") }}Detect items automatically</button><p class="busy-help" hidden>Reading the receipt. Please wait.</p></form>
   </div></div></section>
   {% endif %}
-  {% if not who %}<p><a class="btn" href="/claim?next=/r/{{ receipt.id }}">Choose your name to join the split</a></p>{% endif %}
 
   <div class="token-toolbar" {% if not items %}hidden{% endif %}>
-    <div class="tokenbar" id="tokenbar" role="group" aria-label="Whose token to place">
-    {% for m in members %}
-      <button type="button" class="token" data-user="{{ m.username }}" style="--c: {{ m.color }}" aria-pressed="false"><span class="avatar" aria-hidden="true">{{ m.username[:1] }}</span>{{ m.username }}{% if m.username == who %}<small> · you</small>{% endif %}<span class="check" aria-hidden="true">✓</span></button>
-    {% endfor %}
-    </div>
+    <div class="tokenbar" id="tokenbar" role="group" aria-label="Whose token to place">{% include "_people.html" %}</div>
+    <form class="add-person" id="add-person" {% if people %}hidden{% endif %}>
+      <input name="username" placeholder="Name, e.g. Nina" aria-label="Name of someone splitting" maxlength="32" required autocomplete="off" enterkeyhint="done">
+      <button>{{ icon("plus") }}Add</button>
+      <button type="button" class="text-button" data-add-done>Done</button>
+    </form>
     <div class="toolbar-status"><span id="selection-hint">Choose a person, then tap what they had.</span><span id="presence" class="connection" role="status">Connecting…</span></div>
   </div>
 
@@ -79,6 +77,13 @@
   </div>
 </div>
 <div id="board-feedback" class="feedback-toast" role="status" aria-live="polite" hidden><span></span><button type="button" id="undo-token" hidden>Undo</button></div>
+{# Taking someone off who is on items: receipt.js says which and asks first. #}
+<dialog id="person-dialog" aria-labelledby="person-dialog-title">
+  <h2 id="person-dialog-title">Remove this person?</h2>
+  <p></p>
+  <div class="dialog-actions"><button type="button" class="secondary" data-close-dialog autofocus>Keep</button>
+    <button type="button" class="danger" data-remove-confirm>Remove</button></div>
+</dialog>
 {# One dialog for every item: receipt.js fills it from the row's Edit button. #}
 <dialog id="item-dialog" class="item-dialog" aria-labelledby="item-dialog-title">
   <form method="dialog" class="item-form">
@@ -95,5 +100,5 @@
 </dialog>
 <script src="/static/hit-test.js?v=3" defer></script>
 <script src="/static/drag-rect.js?v=2" defer></script>
-<script src="/static/receipt.js?v=10" defer></script>
+<script src="/static/receipt.js?v=11" defer></script>
 {% endblock %}

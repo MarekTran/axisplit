@@ -1,5 +1,6 @@
 {% from "_icons.html" import icon %}
-<section id="review" class="review-panel" data-status="{{ receipt.status }}" data-status-label="{{ receipt.status | status_label }}" aria-label="Items and shares">
+<section id="review" class="review-panel" data-status="{{ receipt.status }}" data-status-label="{{ receipt.status | status_label }}"
+         data-colors='{{ colors | tojson }}' aria-label="Items and shares">
   <div class="review-head"><h2>Items</h2><span class="muted">{{ summary.assigned_count }}/{{ summary.item_count }} assigned{% if summary.unassigned_count %} · {{ summary.unassigned_total | money(receipt.currency) }} left{% endif %}</span></div>
   <progress value="{{ summary.assigned_count }}" max="{{ summary.item_count or 1 }}" aria-label="Items assigned"></progress>
   {% if items and receipt.printed_total_cents is not none %}{% set gap = receipt.printed_total_cents - summary.total %}
@@ -27,27 +28,27 @@
 
   {% if items %}
   <div class="review-head"><h2>Shares</h2><strong class="amount total">{{ summary.total | money(receipt.currency) }}</strong></div>
-  <ul class="share-list confirmations panel">
-  {% for m in members %}
-    <li style="--c: {{ m.color }}"><div class="person"><span class="avatar" aria-hidden="true">{{ m.username[:1] }}</span><div>{{ m.username }}{% if m.username == who %}<small class="you-tag">you</small>{% endif %}
-      <small class="confirmation-state {{ 'agreed' if m.username in summary.confirmed else '' }}">{% if m.username in summary.confirmed %}✓ Agreed{% elif m.username in summary.totals %}Not confirmed yet{% else %}No items{% endif %}</small></div></div>
-      <strong class="amount">{{ summary.totals.get(m.username, 0) | money(receipt.currency) }}</strong></li>
+  {% if people %}
+  <p class="muted tick-help">Tick people off as you check their share with them. Nothing waits for it.</p>
+  <ul class="share-list ticks panel">
+  {% for p in people %}{% set share = summary.totals.get(p.username, 0) %}{% set ticked = p.username in summary.agreed %}
+    <li style="--c: {{ p.color }}" class="{{ 'ticked' if ticked }}">
+      <button type="button" class="tick" data-confirm="{{ 'unconfirm' if ticked else 'confirm' }}" data-user="{{ p.username }}"
+              aria-pressed="{{ 'true' if ticked else 'false' }}" aria-label="{{ p.username }} agreed">{{ icon("check") }}</button>
+      <div class="person"><span class="avatar" aria-hidden="true">{{ p.username[:1] }}</span><div>{{ p.username }}
+        <small class="had">{{ summary.had.get(p.username, []) | join(', ') or 'Nothing yet' }}</small>
+        {% if p.agreed_cents is not none and not ticked %}<small class="lapsed">Was {{ p.agreed_cents | money(receipt.currency) }} when ticked. Ask again.</small>{% endif %}</div></div>
+      <strong class="amount">{{ share | money(receipt.currency) }}</strong>
+      <button type="button" class="icon-button remove-person" data-remove-person="{{ p.username }}" data-items="{{ summary.had.get(p.username, []) | length }}"
+              aria-label="Remove {{ p.username }}">{{ icon("x") }}</button>
+    </li>
   {% endfor %}
   </ul>
-  <div class="confirmation-action">
-  {% if who in summary.confirmed %}
-    <p class="notice success compact">✓ You agreed to your {{ summary.totals.get(who, 0) | money(receipt.currency) }} share.</p>
-    <button id="confirm-btn" type="button" class="secondary large" data-confirm="unconfirm">Withdraw my confirmation</button>
+  {% set sharing = summary.totals | length %}
+  <p class="muted" id="ticked">{% if sharing and not summary.waiting %}✓ Everyone with a share is ticked off.{% elif sharing %}{{ sharing - summary.waiting | length }} of {{ sharing }} ticked off.{% endif %}</p>
   {% else %}
-    <button id="confirm-btn" type="button" class="large" data-confirm="confirm" {% if not summary.complete or who not in summary.totals %}disabled{% endif %}>{{ icon("check") }}Confirm my {{ summary.totals.get(who, 0) | money(receipt.currency) }} share</button>
+  <p class="muted">Add who’s splitting in the bar above, then tap what each had.</p>
   {% endif %}
-  <p class="muted" id="confirmed">
-    {% if not summary.complete %}Assign every item before confirming.
-    {% elif not summary.waiting %}Everyone with assigned items has agreed. This does not record a payment.
-    {% elif who not in summary.totals %}You don’t have a share to confirm. Waiting for {{ summary.waiting | join(', ') }}.
-    {% else %}Still waiting for {{ summary.waiting | join(', ') }}.{% endif %}
-    Any change resets confirmations.
-  </p>
-  </div>
   {% endif %}
+  <template id="people-next">{% include "_people.html" %}</template>
 </section>
