@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -86,13 +87,17 @@ async def detect_receipt(session: AsyncSession, receipt: Receipt) -> str:
     return "ok" if extracted else "empty"
 
 
-def normalize_pixels(path: Path) -> None:
+def normalize_pixels(path: Path, rotation: float = 0.0) -> None:
     """Bounding boxes are normalized 0..1 against the *rendered* image.
     Browsers rotate EXIF-tagged JPEGs when displaying; OCR models see raw
     pixels. Baking the transpose into the stored file removes that whole class
-    of box-misalignment bugs. Raises on corrupt/truncated images."""
+    of box-misalignment bugs. Raises on corrupt/truncated images.
+    rotation: degrees clockwise the uploader turned the photo; the canvas grows to hold all of it,
+    as the focus step showed it, and the corners it gains are white like the paper."""
     with Image.open(path) as im:
         im = ImageOps.exif_transpose(im)
+        if rotation % 360:
+            im = im.rotate(-rotation, resample=Image.Resampling.BICUBIC, expand=True, fillcolor="white")
         fmt = im.format
         if im.mode not in ("RGB", "RGBA", "L"):
             im = im.convert("RGB")
@@ -107,6 +112,7 @@ async def upload_receipt(
     focus_x: float | None = Form(None), focus_y: float | None = Form(None),
     focus_w: float | None = Form(None), focus_h: float | None = Form(None),
     focus_quad: str | None = Form(None),
+    rotation: float = Form(0.0),
     session: AsyncSession = Depends(get_session),
 ):
     member = await require_member(tab_id, request, session)
@@ -125,7 +131,7 @@ async def upload_receipt(
                 raise HTTPException(413, "image too large (max 12 MB)")
             f.write(chunk)
     try:
-        normalize_pixels(dest)
+        normalize_pixels(dest, max(-360.0, min(rotation, 360.0)))
     except Exception:
         dest.unlink(missing_ok=True)
         raise HTTPException(415, "could not decode image")
@@ -151,6 +157,26 @@ async def upload_receipt(
 
     outcome = await detect_receipt(session, receipt)
     return RedirectResponse(f"/r/{receipt.id}?ocr={outcome}", 303)
+
+
+@router.post("/t/{tab_id}/focus-hint")
+async def focus_hint(tab_id: str, request: Request, image: UploadFile = File(...),
+                     session: AsyncSession = Depends(get_session)):
+    """Where the receipt is on a photo still in the focus step (a small copy), so that step can zoom
+    to it. Its text's extent held every item on all 46 test receipts. None when unread."""
+    await require_member(tab_id, request, session)
+    data = await image.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "image too large")
+    with tempfile.NamedTemporaryFile(suffix=".jpg") as f:
+        f.write(data)
+        f.flush()
+        try:
+            extent = await asyncio.to_thread(ocr.text_extent, Path(f.name))
+        except Exception:
+            logger.exception("Focus hint failed")
+            extent = None
+    return {"extent": [round(v, 4) for v in extent] if extent else None}
 
 
 @router.post("/r/{receipt_id}/detect")
