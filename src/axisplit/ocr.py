@@ -265,11 +265,16 @@ class PaddleBackend(Backend):
         letter = {i: LETTERS[k] for k, i in enumerate(candidates)}
         text = "\n".join(f"{letter[i]}) {t}" if i in letter else f"   {t}" for i, (t, _) in enumerate(rows))
         url = os.environ.get("AXISPLIT_DECIDE_URL", "http://127.0.0.1:8082/v1")
-        response = httpx.post(f"{url.rstrip('/')}/systemone", timeout=httpx.Timeout(60, connect=5), json={
+        body = {
             "state": {"description": DECIDE_STATE, "receipt_lines": text},
             "questions": {"total": {"type": "choice", "instructions": DECIDE_TOTAL,
                                     "criteria": {letter[i]: rows[i][0][:80] for i in candidates}}},
-        })
+        }
+        if model := os.environ.get("AXISPLIT_DECIDE_MODEL"):  # vLLM serves models by name
+            body["model"] = model
+        key = os.environ.get("AXISPLIT_DECIDE_KEY")  # the server's --api-key
+        response = httpx.post(f"{url.rstrip('/')}/systemone", timeout=httpx.Timeout(60, connect=5), json=body,
+                              headers={"Authorization": f"Bearer {key}"} if key else None)
         response.raise_for_status()
         choice = response.json()["answers"]["total"]["choice"]
         return next(i for i, code in letter.items() if code == choice)

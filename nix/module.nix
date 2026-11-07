@@ -47,6 +47,12 @@ in
       example = { DATABASE_URL = "postgresql+asyncpg://axisplit@/axisplit?host=/run/postgresql"; };
       description = "Extra environment for the app. Ends up in the Nix store: no secrets.";
     };
+    environmentFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/run/secrets/axisplit.env";
+      description = "Environment file for secrets, such as AXISPLIT_DECIDE_KEY, read when the service starts.";
+    };
     openFirewall = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -58,7 +64,7 @@ in
         type = lib.types.nullOr lib.types.str;
         default = null;
         example = "Vulkan1";
-        description = "llama.cpp --device (llama-server --list-devices; none for CPU only). Null lets llama.cpp choose.";
+        description = "llama.cpp --device (llama-server --list-devices); \"none\" runs it on the CPU, about 2 s per receipt instead of 0.1 s. Null lets llama.cpp choose.";
       };
     };
   };
@@ -85,6 +91,8 @@ in
       } // cfg.environment;
       serviceConfig = common // {
         ExecStart = lib.getExe packages.default;
+      } // lib.optionalAttrs (cfg.environmentFile != null) {
+        EnvironmentFile = cfg.environmentFile;
       };
     };
 

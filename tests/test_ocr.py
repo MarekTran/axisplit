@@ -172,7 +172,7 @@ def test_decision_model_picks_the_total_from_the_amount_lines(paddle, monkeypatc
     sent = {}
 
     def respond(url, **kwargs):
-        sent["url"], sent["body"] = url, kwargs["json"]
+        sent["url"], sent["body"], sent["headers"] = url, kwargs["json"], kwargs["headers"]
         total = sent["body"]["questions"]["total"]
         letter = next(k for k, line in total["criteria"].items() if line.startswith("TOTAL"))
         return httpx.Response(200, request=httpx.Request("POST", url),
@@ -187,6 +187,25 @@ def test_decision_model_picks_the_total_from_the_amount_lines(paddle, monkeypatc
         "Beer 0,5l 4,50", "Nachos 8,90", "SUBTOTAL 13,40", "TOTAL 12,40", "VAT 21% 2,15"]
     assert "A) Beer 0,5l 4,50" in sent["body"]["state"]["receipt_lines"]
     assert "   Discount -1,00" in sent["body"]["state"]["receipt_lines"]
+    assert "model" not in sent["body"] and sent["headers"] is None  # llama.cpp needs neither
+
+
+def test_decision_server_elsewhere_with_a_model_name_and_key(paddle, monkeypatch):
+    backend, _, image = paddle
+    sent = {}
+
+    def respond(url, **kwargs):
+        sent.update(url=url, model=kwargs["json"].get("model"), headers=kwargs["headers"])
+        return httpx.Response(200, request=httpx.Request("POST", url),
+                              json={"answers": {"total": {"choice": "D"}}})
+
+    monkeypatch.setattr(httpx, "post", respond)
+    monkeypatch.setenv("AXISPLIT_DECIDE_URL", "https://gpu-box:8000/v1/")
+    monkeypatch.setenv("AXISPLIT_DECIDE_MODEL", "vllm-sr/d3-nano")
+    monkeypatch.setenv("AXISPLIT_DECIDE_KEY", "s3cret")
+    assert backend.extract_total(image) == 1240
+    assert sent == {"url": "https://gpu-box:8000/v1/systemone", "model": "vllm-sr/d3-nano",
+                    "headers": {"Authorization": "Bearer s3cret"}}
 
 
 def test_rules_give_the_total_when_the_decision_model_is_down(paddle, monkeypatch):
