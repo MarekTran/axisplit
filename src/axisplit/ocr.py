@@ -236,7 +236,7 @@ class LocalVisionBackend(Backend):
         return schema.model_validate_json(completion["message"]["content"])
 
 
-# The total question, worded as benchmarked: 17/19 right on unseen receipts with vllm-d3-nano.
+# The total question, worded as benchmarked: 17/19 right on unseen receipts with vllm-d3-nano and -lite.
 DECIDE_STATE = ("Text lines of a receipt photo, read by OCR from top to bottom. "
                 "Lines with an amount are labelled.")
 DECIDE_TOTAL = (
@@ -247,6 +247,9 @@ DECIDE_TOTAL = (
     "so it is not the receipt's total."
 )
 LETTERS = [chr(c) for c in range(65, 91)] + [chr(c) for c in range(97, 123)]  # A-Z, a-z
+# Seconds. On 4 CPUs, two uploads at once took 12.5 s at worst with vllm-d3-lite on the CPU;
+# past this an upload takes the rules' total rather than keep someone waiting.
+DECIDE_TIMEOUT = 15
 
 
 class PaddleBackend(Backend):
@@ -295,11 +298,12 @@ class PaddleBackend(Backend):
         candidates = [i for i, (_, value) in enumerate(rows) if value is not None and value > 0]
         if not candidates:
             return None
-        try:
-            return rows[self._pick_total(rows, candidates[-len(LETTERS):])][1]
-        except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:  # unreachable, or no usable answer
-            logger.warning("Decision model unavailable (%s); taking the total from the rules", e)
-            return receipt_rules.parse(lines, width, height)["total_cents"]
+        if os.environ.get("AXISPLIT_DECIDE_URL") != "none":  # "none": the rules alone, by choice
+            try:
+                return rows[self._pick_total(rows, candidates[-len(LETTERS):])][1]
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:  # unreachable, slow, or no usable answer
+                logger.warning("Decision model unavailable (%s); taking the total from the rules", e)
+        return receipt_rules.parse(lines, width, height)["total_cents"]
 
     @staticmethod
     def _extent(lines, width, height) -> Focus | None:
@@ -322,8 +326,9 @@ class PaddleBackend(Backend):
         if model := os.environ.get("AXISPLIT_DECIDE_MODEL"):  # vLLM serves models by name
             body["model"] = model
         key = os.environ.get("AXISPLIT_DECIDE_KEY")  # the server's --api-key
-        response = httpx.post(f"{url.rstrip('/')}/systemone", timeout=httpx.Timeout(60, connect=5), json=body,
-                              headers={"Authorization": f"Bearer {key}"} if key else None)
+        deadline = float(os.environ.get("AXISPLIT_DECIDE_TIMEOUT") or DECIDE_TIMEOUT)
+        response = httpx.post(f"{url.rstrip('/')}/systemone", timeout=httpx.Timeout(deadline, connect=min(deadline, 5)),
+                              json=body, headers={"Authorization": f"Bearer {key}"} if key else None)
         response.raise_for_status()
         choice = response.json()["answers"]["total"]["choice"]
         picked = [i for i, code in letter.items() if code == choice]
@@ -359,10 +364,16 @@ class PaddleBackend(Backend):
                 "Det.limit_type": "max", "Det.limit_side_len": 1280,  # detect on at most 1280 px
                 "Global.log_level": "error", "Global.model_root_dir": str(models),
                 # One thread per physical core: all 16 SMT threads of a Ryzen 7800X3D read an
-                # upload in 1.5 s, its 8 cores in 0.95 s (same text).
-                "EngineConfig.onnxruntime.intra_op_num_threads": max(1, (os.cpu_count() or 2) // 2),
+                # upload in 1.5 s, its 8 cores in 0.95 s (same text). Of the CPUs this process may
+                # use: limited to 4 of them, counting all 16 made uploads twice as slow.
+                "EngineConfig.onnxruntime.intra_op_num_threads": max(1, usable_cpus() // 2),
             })
         return self._engine
+
+
+def usable_cpus() -> int:
+    """CPUs this process may run on: a container's cpuset, not the host's count."""
+    return len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 2
 
 
 def real_box(box: Focus) -> Focus:

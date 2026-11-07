@@ -207,7 +207,8 @@ def test_decision_server_elsewhere_with_a_model_name_and_key(paddle, monkeypatch
     sent = {}
 
     def respond(url, **kwargs):
-        sent.update(url=url, model=kwargs["json"].get("model"), headers=kwargs["headers"])
+        sent.update(url=url, model=kwargs["json"].get("model"), headers=kwargs["headers"],
+                    deadline=kwargs["timeout"].read)
         return httpx.Response(200, request=httpx.Request("POST", url),
                               json={"answers": {"total": {"choice": "D"}}})
 
@@ -215,17 +216,31 @@ def test_decision_server_elsewhere_with_a_model_name_and_key(paddle, monkeypatch
     monkeypatch.setenv("AXISPLIT_DECIDE_URL", "https://gpu-box:8000/v1/")
     monkeypatch.setenv("AXISPLIT_DECIDE_MODEL", "vllm-sr/d3-nano")
     monkeypatch.setenv("AXISPLIT_DECIDE_KEY", "s3cret")
+    monkeypatch.setenv("AXISPLIT_DECIDE_TIMEOUT", "3")
     assert backend.read(image).total_cents == 1240
     assert sent == {"url": "https://gpu-box:8000/v1/systemone", "model": "vllm-sr/d3-nano",
-                    "headers": {"Authorization": "Bearer s3cret"}}
+                    "headers": {"Authorization": "Bearer s3cret"}, "deadline": 3}
+
+
+def test_rules_alone_when_asked(paddle, monkeypatch, caplog):
+    backend, _, image = paddle
+    monkeypatch.setattr(httpx, "post", lambda *a, **kw: pytest.fail("asked the decision model"))
+    monkeypatch.setenv("AXISPLIT_DECIDE_URL", "none")
+    assert backend.read(image).total_cents == 1240
+    assert "unavailable" not in caplog.text  # a choice, not a failure
+
+
+def slow(url, **kwargs):
+    raise httpx.ReadTimeout("past the deadline", request=httpx.Request("POST", url))
 
 
 @pytest.mark.parametrize("respond", [
     refuse,  # down
+    slow,
     answer(json={"answers": {"total": {"choice": "Z"}}}),  # not one of the candidates
     answer(json={"answers": {}}),
     answer(text="<html>Bad gateway</html>"),
-], ids=["down", "unknown-letter", "no-answer", "not-json"])
+], ids=["down", "slow", "unknown-letter", "no-answer", "not-json"])
 def test_rules_give_the_total_without_a_usable_decision(paddle, monkeypatch, caplog, respond):
     backend, _, image = paddle
     monkeypatch.setattr(httpx, "post", respond)

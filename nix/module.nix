@@ -4,12 +4,8 @@ let
   cfg = config.services.axisplit;
   packages = self.packages.${pkgs.stdenv.hostPlatform.system};
   decidePort = 8082; # axisplit-decide's default
-  # Both services run as one system user, so the decision model's downloads can live in dataDir.
-  common = {
-    User = "axisplit";
-    Group = "axisplit";
+  hardening = {
     ProtectSystem = "strict";
-    ReadWritePaths = [ cfg.dataDir ];
     ProtectHome = true;
     PrivateTmp = true;
     NoNewPrivileges = true;
@@ -39,7 +35,7 @@ in
     dataDir = lib.mkOption {
       type = lib.types.path;
       default = "/var/lib/axisplit";
-      description = "Database and uploaded photos (AXISPLIT_DATA); the decision model's downloads go to models/.";
+      description = "Database and uploaded photos (AXISPLIT_DATA).";
     };
     environment = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
@@ -59,12 +55,19 @@ in
       description = "Open the port in the firewall.";
     };
     decide = {
-      enable = lib.mkEnableOption "the decision model that picks receipt totals (llama.cpp; the first start downloads 2.6 GB). Without it totals come from the rules alone";
-      device = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Run the decision model that picks receipt totals, on the CPU next to the app (see "Self-hosting"
+          in the README for its RAM and time). Without it totals come from the rules alone, or from a
+          server of your own: set environment.AXISPLIT_DECIDE_URL.
+        '';
+      };
+      threads = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.positive;
         default = null;
-        example = "Vulkan1";
-        description = "llama.cpp --device (llama-server --list-devices); \"none\" runs it on the CPU, about 2 s per receipt instead of 0.1 s. Null lets llama.cpp choose.";
+        description = "CPU threads for the decision model. Null: one per CPU it may use (nproc).";
       };
     };
   };
@@ -86,29 +89,37 @@ in
         AXISPLIT_DATA = cfg.dataDir;
         AXISPLIT_HOST = cfg.host;
         AXISPLIT_PORT = toString cfg.port;
-      } // lib.optionalAttrs cfg.decide.enable {
-        AXISPLIT_DECIDE_URL = "http://127.0.0.1:${toString decidePort}/v1";
+        AXISPLIT_DECIDE_URL = if cfg.decide.enable then "http://127.0.0.1:${toString decidePort}/v1" else "none";
       } // cfg.environment;
-      serviceConfig = common // {
-        ExecStart = lib.getExe packages.default;
+      serviceConfig = hardening // {
+        User = "axisplit";
+        Group = "axisplit";
+        ReadWritePaths = [ cfg.dataDir ];
+        ExecStart = lib.getExe packages.serve;
       } // lib.optionalAttrs (cfg.environmentFile != null) {
         EnvironmentFile = cfg.environmentFile;
       };
     };
 
+    # Its weights are in the Nix store: it reads nothing else and writes nothing.
     systemd.services.axisplit-decide = lib.mkIf cfg.decide.enable {
       description = "axisplit decision model";
       wantedBy = [ "multi-user.target" ];
-      wants = [ "network-online.target" ];
-      after = [ "network-online.target" ];
       environment = {
-        AXISPLIT_MODEL_CACHE = "${cfg.dataDir}/models";
         AXISPLIT_DECIDE_PORT = toString decidePort;
+      } // lib.optionalAttrs (cfg.decide.threads != null) {
+        AXISPLIT_DECIDE_THREADS = toString cfg.decide.threads;
       };
-      serviceConfig = common // {
-        ExecStart = lib.escapeShellArgs ([ (lib.getExe packages.decide-server) ]
-          ++ lib.optionals (cfg.decide.device != null) [ "--device" cfg.decide.device ]);
-        SupplementaryGroups = [ "render" "video" ]; # the GPU, for Vulkan
+      serviceConfig = hardening // {
+        DynamicUser = true;
+        ExecStart = lib.getExe packages.decide-server;
+        # Started once it answers. A model that hasn't loaded within a minute fails the start, and
+        # it is tried again; meanwhile uploads take the rules' total.
+        ExecStartPost = pkgs.writeShellScript "axisplit-decide-ready" ''
+          for _ in $(seq 120); do ${packages.decide-server}/bin/axisplit-decide-health && exit 0; sleep 0.5; done
+          exit 1
+        '';
+        RestartSec = 5;
       };
     };
   };
