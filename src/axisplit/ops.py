@@ -47,12 +47,22 @@ async def get_receipt_items(session: AsyncSession, receipt_id: str) -> list[Item
     return list(await session.scalars(stmt))
 
 
+async def lock_receipt(session: AsyncSession, receipt_id: str) -> None:
+    """Holds the receipt until this transaction ends, so changes to its people and their tokens take
+    turns: a token is never written for someone removed meanwhile. Call it before reading what the
+    change depends on. A write that changes nothing: Postgres locks the row, and SQLite, which has no
+    row locks (nor FOR UPDATE), takes its database write lock."""
+    await session.execute(update(Receipt).where(Receipt.id == receipt_id).values(status=Receipt.status)
+                          .execution_options(synchronize_session=False))
+
+
 async def apply_op(session: AsyncSession, receipt: Receipt, op: dict) -> dict:
     """Validate & apply one client op, for any person on the receipt. Returns the event to broadcast."""
     kind, receipt_id = op.get("op"), receipt.id
     if kind not in ("place", "unplace", "confirm", "unconfirm"):
         raise HTTPException(422, f"unknown op {kind!r}")
-    person = await session.get(Person, (receipt_id, op.get("username") or ""))
+    await lock_receipt(session, receipt_id)
+    person = await session.get(Person, (receipt_id, op.get("username") or ""), populate_existing=True)
     if person is None:
         raise HTTPException(404, "Add this person to the receipt first.")
     target = person.username

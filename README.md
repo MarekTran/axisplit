@@ -88,6 +88,8 @@ Regression tests (both modes verified):
 
 ```bash
 uv run pytest -q tests/test_ocr.py tests/test_ux.py    # OCR, safe recovery, constraints
+AXISPLIT_TEST_DATABASE_URL='postgresql+asyncpg://'$USER'@localhost:5433/axisplit_test' \
+  uv run pytest -q tests/test_ux.py   # the same on Postgres; that database is emptied
 nix shell --inputs-from . nixpkgs#nodejs -c node --test tests/hit-test.test.cjs
 nix shell --inputs-from . nixpkgs#geckodriver -c \
   uv run --with selenium python scripts/ux_browser.py   # isolated browser tests

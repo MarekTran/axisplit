@@ -1,20 +1,24 @@
 """Interaction constraints and mistake recovery, isolated from the running app DB."""
 
+import asyncio
 import io
 import json
+import os
 from types import SimpleNamespace
 
 import httpx
+import pytest
 import pytest_asyncio
 from PIL import Image
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from axisplit import ocr
 from axisplit.db import get_session
 from axisplit.main import app
 from axisplit.models import Base, Item, Person, Receipt, TokenAssignment
 from axisplit.routers import receipts
+from axisplit.split import totals
 from axisplit.viewmodels import money, photo_view
 
 
@@ -30,9 +34,11 @@ async def client(tmp_path, monkeypatch):
         ocr.ExtractedItem("Watermelon tea", 695, .2, .43, .6, .02),
     ], reader.total, reader.currency, (.15, .3, .7, .4)))
     monkeypatch.setattr(ocr, "locate", lambda _: (.15, .3, .7, .4))
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    # AXISPLIT_TEST_DATABASE_URL runs the tests on another database, e.g. a scratch Postgres one (emptied).
+    engine = create_async_engine(os.environ.get("AXISPLIT_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     async def isolated_session():
@@ -113,6 +119,42 @@ async def test_people_are_added_by_name_and_removed_with_their_tokens(client):
     assert (await client.post(f"/r/{receipt_id}/people/remove", data={"username": "Nina"})).status_code == 404
     again = await client.post(f"/r/{receipt_id}/people", data={"username": "Marek"})
     assert again.json()["color"] == before["Nina"].color  # the freed color, not Adam's
+
+
+@pytest.mark.parametrize("paused", ["place", "remove"])
+async def test_removing_someone_while_their_token_is_placed_leaves_them_no_share(client, monkeypatch, paused):
+    """One phone taps Nina onto an item while another removes her. The two take turns: the removal
+    takes the new token too, or the tap finds her gone. A token left behind would take a share of the
+    item that the Shares list, which shows only the people still on the receipt, never shows."""
+    receipt_id = await upload(client, "Adam", "Nina")
+    first, _ = await items_for(client, receipt_id)
+    await op(client, receipt_id, "place", item_id=first.id, username="Adam")
+    place = lambda: op(client, receipt_id, "place", item_id=first.id, username="Nina")
+    remove = lambda: client.post(f"/r/{receipt_id}/people/remove", data={"username": "Nina"})
+    other = None
+
+    # Pause the first request once it has seen Nina on the receipt (the tap: about to load the item; the
+    # removal: her tokens gone, about to delete her) and start the other request meanwhile.
+    name, when = ("get", lambda entity, *_: entity is Item) if paused == "place" else \
+        ("delete", lambda obj, *_: isinstance(obj, Person))
+    original = getattr(AsyncSession, name)
+
+    async def interleaved(self, *args, **kwargs):
+        nonlocal other
+        if other is None and when(*args):
+            other = asyncio.create_task(remove() if paused == "place" else place())
+            await asyncio.wait({other}, timeout=.5)
+            assert not other.done()  # it waits for the paused request to finish
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, name, interleaved)
+    first_done = await (place() if paused == "place" else remove())
+    placed, removed = (first_done, await other) if paused == "place" else (await other, first_done)
+    assert removed.status_code == 200 and placed.status_code == (200 if paused == "place" else 404)
+    assert set(await people(client, receipt_id)) == {"Adam"}
+    items = await items_for(client, receipt_id)
+    assert {t.username for i in items for t in i.tokens} == {"Adam"}
+    assert totals(items) == {"Adam": 695}
 
 
 async def test_anyone_can_be_ticked_off_and_a_tick_lapses_only_when_their_share_moves(client):

@@ -17,7 +17,8 @@ from ..config import ALLOWED_IMAGE_TYPES, MAX_UPLOAD_BYTES, UPLOAD_DIR, new_id
 from ..db import get_session
 from ..deps import get_receipt_or_404, recent_ids, remember
 from ..models import Item, Person, Receipt, TokenAssignment
-from ..ops import add_item, apply_op, clamp_box, get_people, get_receipt_items, parse_cents, recompute_status
+from ..ops import (add_item, apply_op, clamp_box, get_people, get_receipt_items, lock_receipt, parse_cents,
+                   recompute_status)
 from ..templ import templates
 from ..viewmodels import CURRENCIES, photo_view, receipt_summary
 
@@ -212,7 +213,8 @@ async def add_person(receipt_id: str, username: str = Form(...), session: AsyncS
 async def remove_person(receipt_id: str, username: str = Form(...), session: AsyncSession = Depends(get_session)):
     """Takes someone off the receipt with their tokens; the items they were on are split among the rest."""
     receipt = await get_receipt_or_404(session, receipt_id)
-    person = await session.get(Person, (receipt_id, username))
+    await lock_receipt(session, receipt_id)  # a token placed meanwhile goes too (see apply_op)
+    person = await session.get(Person, (receipt_id, username), populate_existing=True)
     if person is None:
         raise HTTPException(404, f"{username} isn't on this receipt.")
     await session.execute(delete(TokenAssignment).where(
