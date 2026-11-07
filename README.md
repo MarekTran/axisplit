@@ -66,6 +66,11 @@ Mistral OCR is a hosted service, not a downloadable llama.cpp model. InternVL
 and Gemma are alternatives to benchmark, not drop-in guarantees of accurate boxes.
 `AXISPLIT_OCR_URL` overrides the vision server's default `http://127.0.0.1:8081/v1`.
 
+A reader of your own can run as a separate service: `AXISPLIT_OCR_BACKEND=http` with
+`AXISPLIT_READER_URL`. The API is in [`docs/reader-api.md`](docs/reader-api.md), and
+`scripts/reader_service.py` serves the built-in reader that way as a template. Score a
+reader on the labelled receipts with `python -m bench.reader` before relying on it.
+
 The tab page provides a shareable invite link for collaboration on your LAN.
 
 Dev DB is SQLite under `./data/`. Postgres (still inside `nix develop`):

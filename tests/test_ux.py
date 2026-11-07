@@ -2,6 +2,7 @@
 
 import io
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest_asyncio
@@ -23,14 +24,13 @@ async def client(tmp_path, monkeypatch):
     uploads.mkdir()
     monkeypatch.setattr(receipts, "UPLOAD_DIR", uploads)
     monkeypatch.setattr(images, "UPLOAD_DIR", uploads)
-    client_focus = []
-    monkeypatch.setattr(ocr, "extract_items", lambda _, focus, quad: client_focus.append(focus if quad is None else (focus, quad)) or [
+    # What the reader returns; currency unread: the tab's last receipt's, else EUR.
+    reader = SimpleNamespace(total=1390, currency=None, areas=[])
+    monkeypatch.setattr(ocr, "read", lambda _, area: reader.areas.append(area) or ocr.Reading([
         ocr.ExtractedItem("Mango tea", 695, .2, .4, .6, .02),
         ocr.ExtractedItem("Watermelon tea", 695, .2, .43, .6, .02),
-    ])
-    monkeypatch.setattr(ocr, "extract_total", lambda _: 1390)
-    monkeypatch.setattr(ocr, "text_extent", lambda _: (.15, .3, .7, .4))
-    monkeypatch.setattr(ocr, "currency", lambda _: None)  # unread: the tab's last receipt's, else EUR
+    ], reader.total, reader.currency, (.15, .3, .7, .4)))
+    monkeypatch.setattr(ocr, "locate", lambda _: (.15, .3, .7, .4))
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
@@ -46,7 +46,7 @@ async def client(tmp_path, monkeypatch):
                                      base_url="http://test", follow_redirects=True) as c:
             await c.post("/claim", data={"username": "Adam", "next": "/"})
             c.sessions = sessions
-            c.focus = client_focus
+            c.reader, c.focus = reader, reader.areas
             yield c
     finally:
         app.dependency_overrides.clear()
@@ -198,7 +198,8 @@ async def test_focus_area_is_stored_and_sent_to_ocr(client):
     page = await client.post(f"/t/{tab_id}/receipts", files={"image": ("check.jpg", photo(), "image/jpeg")},
                              data={"focus_x": ".1", "focus_y": ".3", "focus_w": ".8", "focus_h": ".4"})
     receipt_id = page.url.path.rsplit("/", 1)[-1]
-    assert client.focus == [(.1, .3, .8, .4)]
+    area, = client.focus  # the rectangle's corners
+    assert [(round(x, 6), round(y, 6)) for x, y in area] == [(.1, .3), (.9, .3), (.9, .7), (.1, .7)]
     async with client.sessions() as session:
         receipt = await session.get(Receipt, receipt_id)
         assert (receipt.focus_x, receipt.focus_h, receipt.printed_total_cents) == (.1, .4, 1390)
@@ -213,14 +214,14 @@ async def test_dragged_corners_are_stored_and_bound_the_crop(client):
                              data={"focus_x": ".1", "focus_y": ".3", "focus_w": ".8", "focus_h": ".4",
                                    "focus_quad": json.dumps(quad)})
     receipt_id = page.url.path.rsplit("/", 1)[-1]
-    (focus, sent), = client.focus
-    assert [round(v, 6) for v in focus] == [.1, .3, .8, .4] and sent == [tuple(p) for p in quad]
+    sent, = client.focus
+    assert sent == [tuple(p) for p in quad]
     async with client.sessions() as session:
         assert json.loads((await session.get(Receipt, receipt_id)).focus_quad) == quad
 
 
-async def test_printed_total_flags_a_missing_item(client, monkeypatch):
-    monkeypatch.setattr(ocr, "extract_total", lambda _: 2000)
+async def test_printed_total_flags_a_missing_item(client):
+    client.reader.total = 2000
     _, receipt_id = await upload(client)
     assert client.focus == [None]  # no focus drawn: whole photo
     review = await client.get(f"/r/{receipt_id}/review")
@@ -274,12 +275,12 @@ def test_money_is_written_the_local_way():
     assert money_by_currency({}, "CZK") == "0,00\u00a0Kč"
 
 
-async def test_currency_is_read_inherited_fixable_and_never_summed_across(client, monkeypatch):
-    monkeypatch.setattr(ocr, "currency", lambda _: "CZK")
+async def test_currency_is_read_inherited_fixable_and_never_summed_across(client):
+    client.reader.currency = "CZK"
     tab_id, first = await upload(client)
     page = await client.get(f"/r/{first}")
     assert "6,95\u00a0Kč" in page.text and "Price (Kč)" in page.text and "\u00a0€" not in page.text  # no amount in euros (the picker still lists EUR)
-    monkeypatch.setattr(ocr, "currency", lambda _: None)  # unread: the tab's last receipt's
+    client.reader.currency = None  # unread: the tab's last receipt's
     second = (await client.post(f"/t/{tab_id}/receipts", files={"image": ("b.jpg", photo("gray"), "image/jpeg")})).url.path.rsplit("/", 1)[-1]
     async with client.sessions() as session:
         assert (await session.get(Receipt, second)).currency == "CZK"

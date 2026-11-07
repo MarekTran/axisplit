@@ -129,3 +129,18 @@ outgrows it is killed alone instead of the desktop. Models download into
 `~/.cache/axisplit-models`; predictions go to `bench/preds/vlm/` (gitignored).
 
 Columns, modes and all results: [`docs/benchmarks.md`](../docs/benchmarks.md).
+
+## Scoring a reader (`bench/reader.py`)
+
+Any reader, including one running as its own service (see
+[`docs/reader-api.md`](../docs/reader-api.md)), is scored through the call an upload makes,
+`ocr.read()`. Per receipt it reads the whole photo, then the focus area as above. The total
+and currency are the focus read's, as on an upload. Scoring is shared with `bench.vlm` and
+adds `currency_right`:
+
+```bash
+AXISPLIT_OCR_BACKEND=http AXISPLIT_READER_URL=http://127.0.0.1:9000 \
+    python -m bench.reader --name my-reader --cases test_photos/new_batch/cases --preds test_photos/new_batch/preds
+python -m bench.vlm score --cases test_photos/new_batch/cases --preds test_photos/new_batch/preds \
+    --split test_photos/new_batch/split.json:heldout
+```
