@@ -111,6 +111,22 @@ def test_rules_read_items_with_boxes():
     assert parsed["total_cents"] == 1240
 
 
+def test_rules_read_quantity_first_names_with_the_price_on_the_row_below():
+    # Czech till layout: "5ks 21 % Pilsner" with its line total a little lower, then the unit price;
+    # the last item has its price mid-line, left of the price column.
+    lines = [
+        ("5ks 21 % Pilsner Urquell 0,5", box(100, 400, 600, 430)), ("360,00 Kč", box(700, 440, 900, 470)),
+        ("5 ks x 72,00 Kč/ks", box(120, 500, 500, 525)),
+        ("4ks 21 % Gin Tonic", box(100, 560, 500, 590)), ("560,00 Kč", box(700, 600, 900, 630)),
+        ("4 ks x 140,00 Kč/ks", box(120, 660, 500, 685)),
+        ("1ks 21 % Premium 450,00 Kč", box(100, 720, 650, 750)),
+        ("1 ks x 450,00 Kč/ks", box(120, 780, 500, 805)),
+    ]
+    parsed = receipt_rules.parse(lines, 1000, 2000)
+    assert [(i["label"], i["price_cents"]) for i in parsed["items"]] == [
+        ("Pilsner Urquell 0,5", 36000), ("Gin Tonic", 56000), ("Premium", 45000)]
+
+
 class FakeOCR:
     """Stands in for RapidOCR: the lines that fit in the crop it is handed, in crop pixels."""
     def __init__(self, lines):
