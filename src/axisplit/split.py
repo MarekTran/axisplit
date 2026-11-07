@@ -3,7 +3,7 @@
 from collections import defaultdict
 from dataclasses import dataclass
 
-from .models import Item
+from .models import Item, Person
 
 
 @dataclass
@@ -26,6 +26,20 @@ def split_item(item: Item) -> list[Share]:
     leftover = item.price_cents - sum(cents for cents, _ in exact.values())
     bonus = set(sorted(exact, key=lambda u: -exact[u][1])[:leftover])  # stable sort keeps name order on ties
     return [Share(t.username, item.id, item.label, exact[t.username][0] + (t.username in bonus)) for t in tokens]
+
+
+def totals(items: list[Item]) -> dict[str, int]:
+    """Each person's share of these items, in cents."""
+    owed: dict[str, int] = defaultdict(int)
+    for item in items:
+        for share in split_item(item):
+            owed[share.username] += share.cents
+    return dict(owed)
+
+
+def agreed(people: list[Person], shares: dict[str, int]) -> set[str]:
+    """Who is ticked off at the share they have now."""
+    return {p.username for p in people if p.agreed_cents is not None and p.agreed_cents == shares.get(p.username, 0)}
 
 
 def tab_balances(items: list[Item], payer: str) -> dict[str, int]:

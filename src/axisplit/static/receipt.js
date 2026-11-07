@@ -1,14 +1,15 @@
 // SSR board: HTTP acknowledges edits; WebSocket broadcasts live peer changes.
-// The review fragment is authoritative for amounts, confirmations and assignments.
+// The review fragment is authoritative for amounts, ticks, assignments and who is on the receipt.
+// No accounts: whoever has the link places tokens and ticks people off for anyone.
 (() => {
   const board = document.getElementById("board");
   if (!board) return;
   const rid = board.dataset.receipt;
-  const who = board.dataset.who;
-  const colors = JSON.parse(board.dataset.colors);
+  let colors = JSON.parse(board.dataset.colors);
   const imgwrap = document.getElementById("imgwrap");
   const tokenbar = document.getElementById("tokenbar");
-  let selected = colors[who] ? who : null;
+  const addForm = document.getElementById("add-person");
+  let selected = null;
   let ws;
   let closing = false;
   let reviewTimer;
@@ -42,12 +43,12 @@
       token.classList.toggle("selected", active);
       token.setAttribute("aria-pressed", String(active));
     }
-    document.getElementById("selection-hint").textContent = selected
-      ? `Tap what ${selected} had`
-      : "Choose a person, then tap what they had.";
+    document.getElementById("selection-hint").textContent = selected ? `Tap what ${selected} had`
+      : Object.keys(colors).length ? "Choose a person, then tap what they had." : "Add who’s splitting first.";
     board.style.setProperty("--sel-c", colors[selected] || ""); // Tints the "+" on every item row.
   }
   tokenbar.addEventListener("click", (event) => {
+    if (event.target.closest("[data-add-person]")) { openAddPerson(); return; }
     const token = event.target.closest(".token");
     if (!token) return;
     selected = token.dataset.user; // Selection is a choice, not an on/off switch.
@@ -72,8 +73,11 @@
   }
   // spot: where along the item's box the token goes (0..1), when it was tapped on the photo.
   function place(itemId, spot = null) {
-    if (!who) { feedback("Choose your name before placing tokens."); return; }
-    if (!selected) { feedback("Choose a person above first."); return; }
+    if (!selected) {
+      if (!Object.keys(colors).length) openAddPerson();
+      feedback(Object.keys(colors).length ? "Choose a person above first." : "Add who’s splitting first.");
+      return;
+    }
     send({ op: "place", item_id: itemId, username: selected, ...(spot === null ? {} : { spot }) });
   }
   imgwrap.addEventListener("click", (event) => {
@@ -87,7 +91,7 @@
     }
     const target = resolveItem(event.clientX, event.clientY);
     if (!target) { feedback("Detect the receipt first, or add a missing item below."); return; }
-    if (who && selected) highlight(target.el);
+    if (selected) highlight(target.el);
     const box = target.el.getBoundingClientRect();  // The token sits where the finger was.
     place(target.id, Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)));
   });
@@ -101,8 +105,10 @@
     if (holder) send({ op: "unplace", item_id: holder.dataset.item, username: holder.dataset.user });
     const edit = event.target.closest("[data-edit]");
     if (edit) openItem(edit);
-    const confirm = event.target.closest("[data-confirm]");
-    if (confirm && !confirm.disabled) send({ op: confirm.dataset.confirm });
+    const tick = event.target.closest("[data-confirm]");
+    if (tick) send({ op: tick.dataset.confirm, username: tick.dataset.user });
+    const remove = event.target.closest("[data-remove-person]");
+    if (remove) removePerson(remove);
     const jump = event.target.closest("[data-jump]");
     if (jump) {
       const box = imgwrap.querySelector(`.box[data-item="${jump.dataset.jump}"]`);
@@ -120,7 +126,6 @@
   }
   // Edits queue up in order, so tapping an item five times places five tokens.
   function send(op, allowUndo = true) {
-    if (!who) { location.href = `/claim?next=${encodeURIComponent(location.pathname)}`; return; }
     let message = null;
     if (op.op === "place" || op.op === "unplace") {
       const counts = tokenCounts(op.item_id);
@@ -134,6 +139,12 @@
       message = !count ? `${op.username} removed from ${label}. Saved.`
         : count === 1 && op.op === "place" ? `${op.username} added to ${label}. Saved.`
         : `${op.username} ×${count} on ${label}. Saved.`;
+    } else {  // A tick: shown right away, and tapping it again is its undo.
+      const tick = board.querySelector(`.tick[data-user="${CSS.escape(op.username)}"]`);
+      tick?.setAttribute("aria-pressed", String(op.op === "confirm"));
+      tick?.closest("li").classList.toggle("ticked", op.op === "confirm");
+      message = op.op === "confirm" ? `${op.username} ticked off.` : `${op.username} unticked.`;
+      allowUndo = false;
     }
     feedback("Saving…");
     saving++;
@@ -143,15 +154,11 @@
     try {
       const response = await fetch(`/r/${rid}/ops`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...op, actor: who }),
+        body: JSON.stringify(op),
       });
       const event = await response.json();
       if (!response.ok) throw new Error(event.detail || "Couldn’t save. Please try again.");
-      if (message) {
-        feedback(message, allowUndo ? { ...op, op: op.op === "place" ? "unplace" : "place" } : null);
-      } else {
-        feedback(op.op === "confirm" ? "Your confirmation is saved. Others can now check their shares." : "Your confirmation was withdrawn.");
-      }
+      feedback(message, allowUndo ? { ...op, op: op.op === "place" ? "unplace" : "place" } : null);
     } catch (error) {
       feedback(error.message || "Connection lost. Your change wasn’t confirmed; please retry.");
     }
@@ -163,7 +170,6 @@
     const version = ++reviewVersion;
     try {
       const response = await fetch(`/r/${rid}/review`);
-      if (response.status === 410) { location.href = `/t/${board.dataset.tab}?removed=${rid}`; return; }
       if (!response.ok) throw new Error("Couldn’t refresh shares. Reload to check the latest split.");
       const html = await response.text();
       if (version !== reviewVersion || saving) return; // Newer taps are showing; refresh again after them.
@@ -175,11 +181,12 @@
       } : null;
       document.getElementById("review").replaceWith(next);
       if (focus) {
-        const replacement = [...next.querySelectorAll("button")].find(button => focus.confirm ? button.dataset.confirm
-          : focus.add ? button.dataset.add === focus.add
+        const replacement = [...next.querySelectorAll("button")].find(button => focus.add ? button.dataset.add === focus.add
+          : focus.confirm ? button.dataset.confirm && button.dataset.user === focus.user
           : button.dataset.item === focus.item && button.dataset.user === focus.user);
         replacement?.focus({ preventScroll: true });
       }
+      syncPeople(next);
       const status = document.getElementById("status");
       status.textContent = next.dataset.statusLabel;
       status.className = `badge ${next.dataset.status}`;
@@ -256,6 +263,15 @@
     row.classList.toggle("assigned", placed.length > 0);
     row.classList.toggle("unassigned", !placed.length);
   }
+  // The people bar follows the review: someone added or removed here or on another phone.
+  function syncPeople(review) {
+    const next = JSON.parse(review.dataset.colors);
+    if (Object.keys(next).join("\n") === Object.keys(colors).join("\n")) return;  // Keeps the bar's scroll.
+    colors = next;
+    tokenbar.replaceChildren(review.querySelector("#people-next").content.cloneNode(true));
+    if (!(selected in colors)) selected = null;
+    paintSelection();
+  }
   function syncBoxTokens() {
     for (const box of imgwrap.querySelectorAll(".box")) {
       renderPips(box.dataset.item, tokenCounts(box.dataset.item), tokenSpots(box.dataset.item));
@@ -292,7 +308,6 @@
   const itemForm = itemDialog.querySelector("form");
   let editingItem = null;
   function openItem(button) {
-    if (!who) { location.href = `/claim?next=${encodeURIComponent(location.pathname)}`; return; }
     editingItem = button.dataset.edit;
     const number = button.closest("li").querySelector(".item-jump").textContent;
     itemDialog.querySelector("h2").textContent = `Edit item ${number}`;
@@ -320,13 +335,16 @@
     changeItem(id, "/delete", null, (item) => `Deleted ${item.label}.`,
       () => changeItem(id, "/restore", null, (item) => `${item.label} is back.`));
   }
-  // Queued with the token edits, so a delete and the taps around it stay in order.
   function changeItem(id, action, body, message, undoAction = null) {
+    change(`/items/${id}${action}`, body, message, undoAction);
+  }
+  // Queued with the token edits, so a delete and the taps around it stay in order.
+  function change(path, body, message, undoAction = null) {
     feedback("Saving…");
     saving++;
     queue = queue.then(async () => {
       try {
-        const response = await fetch(`/r/${rid}/items/${id}${action}`, { method: "POST", body });
+        const response = await fetch(`/r/${rid}${path}`, { method: "POST", body });
         const item = await response.json();
         if (!response.ok) throw new Error(item.detail || "Couldn’t save. Please try again.");
         feedback(message(item), undoAction);
@@ -335,6 +353,57 @@
       }
     }).finally(() => { if (!--saving) refreshReview(); });
   }
+  // People are added by name in the bar; the one just added is selected, to tap what they had.
+  function openAddPerson() {
+    addForm.hidden = false;
+    addForm.elements.username.focus();
+  }
+  addForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const input = addForm.elements.username;
+    try {
+      const response = await fetch(`/r/${rid}/people`, { method: "POST", body: new FormData(addForm) });
+      const person = await response.json();
+      if (!response.ok) throw new Error(person.detail || "Couldn’t add them. Please try again.");
+      input.value = "";
+      selected = person.username;
+      feedback(`Added ${person.username}. Tap what they had, or add the next name.`);
+      refreshReview();
+    } catch (error) { feedback(error.message); }
+    input.focus();
+  });
+  addForm.querySelector("[data-add-done]").addEventListener("click", () => { addForm.hidden = true; });
+  // Someone on no items goes at once; someone on items only after saying what that changes.
+  const personDialog = document.getElementById("person-dialog");
+  let removing = null;
+  function removePerson(button) {
+    removing = button.dataset.removePerson;
+    const items = Number(button.dataset.items);
+    if (!items) { dropPerson(removing); return; }
+    personDialog.querySelector("h2").textContent = `Remove ${removing}?`;
+    personDialog.querySelector("p").textContent = `${removing} is on ${items} item${items === 1 ? "" : "s"}. `
+      + "Their part goes to the others on each item, or the item goes back to unassigned.";
+    personDialog.querySelector("[data-remove-confirm]").textContent = `Remove ${removing}`;
+    personDialog.showModal();
+  }
+  personDialog.querySelector("[data-remove-confirm]").addEventListener("click", () => {
+    personDialog.close();
+    dropPerson(removing);
+  });
+  function dropPerson(name) {
+    change("/people/remove", new URLSearchParams({ username: name }), () => `Removed ${name}.`);
+  }
+  // The link is the only key, so sharing it is how others join in.
+  board.querySelector("[data-share]").addEventListener("click", async () => {
+    const url = location.origin + location.pathname;
+    try {
+      if (navigator.share) await navigator.share({ title: "Split this receipt", url });
+      else await navigator.clipboard.writeText(url);
+      feedback(navigator.share ? "Anyone with the link can edit this split." : "Link copied. Anyone with it can edit this split.");
+    } catch (error) {
+      if (error.name !== "AbortError") feedback(`Copy this link: ${url}`);
+    }
+  });
   // Just added from "Add a missing item": show where it went, and offer to take it back.
   const added = new URLSearchParams(location.search).get("added");
   if (added) {
@@ -434,8 +503,6 @@
   function liveEvent(event) {
     if (event.type === "presence") {
       presence("live", `Live · ${event.online} online`);
-    } else if (event.type === "removed") {
-      location.href = `/t/${board.dataset.tab}?removed=${rid}`;
     } else if (event.type === "box") {
       moveBox(event);
     } else if (event.type === "error") {
@@ -446,9 +513,9 @@
     }
   }
   function connect() {
-    if (!who || closing) return;
+    if (closing) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/ws/receipts/${rid}?u=${encodeURIComponent(who)}`);
+    ws = new WebSocket(`${proto}://${location.host}/ws/receipts/${rid}`);
     ws.onopen = () => { presence("live", "Live updates connected"); refreshReview(); };
     ws.onmessage = (event) => liveEvent(JSON.parse(event.data));
     ws.onclose = () => {

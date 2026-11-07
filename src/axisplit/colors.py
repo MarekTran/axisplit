@@ -5,5 +5,6 @@ PALETTE = [
 ]
 
 
-def color_for(index: int) -> str:
-    return PALETTE[index % len(PALETTE)]
+def free_color(used: set[str]) -> str:
+    """The first color nobody on the receipt has; past twelve people, colors repeat."""
+    return next((c for c in PALETTE if c not in used), PALETTE[len(used) % len(PALETTE)])
