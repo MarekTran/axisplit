@@ -88,6 +88,57 @@ AXISPLIT_OCR_BACKEND=stub bash scripts/smoke.sh
 AXISPLIT_OCR_BACKEND=stub uv run python scripts/ws_smoke.py
 ```
 
+## Self-hosting
+
+The app reads receipts on the CPU in about a second. A small decision model picks
+each receipt's total; without it, totals come from rules (right on 11 of 19 unseen
+receipts, against 17). Where that model runs is the main choice:
+
+| Decision model | Per receipt | Nix | Docker |
+|---|---|---|---|
+| none | | `nix run github:MarekTran/axisplit` | `docker compose up -d` |
+| GPU | 0.1 s | also `nix run github:MarekTran/axisplit#decide-server` | `--profile vulkan`, `cuda` for NVIDIA |
+| CPU | 2–5 s | `… #decide-server -- --device none` | `--profile cpu` |
+| your server (vLLM, llama.cpp) | | `AXISPLIT_DECIDE_URL=…` | the same |
+
+Nix builds the app from `uv.lock` with [uv2nix](https://github.com/pyproject-nix/uv2nix),
+OCR models included. The Docker image is built by Nix too and holds only the app's
+runtime closure; the decision model runs in llama.cpp's own image.
+
+| Variable | Default | |
+|---|---|---|
+| `AXISPLIT_DATA` | `~/.local/share/axisplit`, `/data` in Docker | database and photos |
+| `AXISPLIT_HOST`, `AXISPLIT_PORT` | `127.0.0.1`, `8000` | where the app listens |
+| `DATABASE_URL` | SQLite in `AXISPLIT_DATA` | or `postgresql+asyncpg://…` |
+| `AXISPLIT_DECIDE_URL` | `http://127.0.0.1:8082/v1` | decision server: any with `/v1/systemone` |
+| `AXISPLIT_DECIDE_MODEL`, `AXISPLIT_DECIDE_KEY` | | model name and API key, for vLLM |
+| `AXISPLIT_DECIDE_DEVICE` | `Vulkan0`, `CUDA0` | Docker: the GPU (`llama-server --list-devices`) |
+| `AXISPLIT_DECIDE_HF`, `AXISPLIT_DECIDE_PORT` | `ggml-org/vllm-d3-nano-GGUF:Q8_0`, `8082` | `decide-server`'s model and port |
+
+Docker Compose reads `AXISPLIT_PORT` and the `AXISPLIT_DECIDE_*` ones from the shell or
+a `.env` file. With vLLM ([a nightly](https://recipes.vllm.ai/vllm-sr/d3-nano)) on another machine:
+
+```bash
+vllm serve vllm-sr/d3-nano --api-key "$KEY"     # on the GPU machine
+AXISPLIT_DECIDE_URL=http://gpu-box:8000/v1 AXISPLIT_DECIDE_MODEL=vllm-sr/d3-nano \
+  AXISPLIT_DECIDE_KEY="$KEY" nix run github:MarekTran/axisplit
+```
+
+On NixOS, with the flake as an input:
+
+```nix
+imports = [ axisplit.nixosModules.default ];
+services.axisplit = {
+  enable = true;              # http://127.0.0.1:8000, data in /var/lib/axisplit
+  # host = "0.0.0.0"; openFirewall = true;
+  decide.enable = true;       # the decision model; its first start downloads 2.6 GB
+  decide.device = "Vulkan0";  # needs hardware.graphics.enable; "none" for the CPU
+  # Or a server elsewhere, with AXISPLIT_DECIDE_KEY in a file outside the Nix store:
+  # environment.AXISPLIT_DECIDE_URL = "http://gpu-box:8000/v1";
+  # environmentFile = "/run/secrets/axisplit";
+};
+```
+
 ## OCR benchmark
 
 ```bash

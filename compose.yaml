@@ -1,0 +1,52 @@
+# The app reads receipts on the CPU; a small decision model picks each receipt's total.
+# Pick where that model runs with a profile (see "Self-hosting" in the README):
+#   docker compose up -d                     none: totals from the rules alone
+#   docker compose --profile vulkan up -d    a GPU through Vulkan (AMD, Intel)
+#   docker compose --profile cuda up -d      an NVIDIA GPU (needs the NVIDIA Container Toolkit)
+#   docker compose --profile cpu up -d       the CPU, about 2 s more per receipt
+# A server you already run (vLLM, llama.cpp): set AXISPLIT_DECIDE_URL and use no profile.
+
+x-decide: &decide
+  # llama.cpp at the flake's build, which serves /v1/systemone, on its image's port 8080; the
+  # flags are axisplit-decide's. The first start downloads the model (2.6 GB) into the models volume.
+  command: [-hf, "ggml-org/vllm-d3-nano-GGUF:Q8_0", --no-mmproj, --ctx-size, "8192", -b, "8192",
+            -ub, "8192", --parallel, "1", --n-gpu-layers, "99", --cache-ram, "0"]
+  volumes: [models:/models]
+  networks: {default: {aliases: [decide]}}
+  restart: unless-stopped
+
+services:
+  app:
+    build: .
+    image: axisplit
+    ports: ["${AXISPLIT_PORT:-8000}:8000"]
+    volumes: [data:/data]
+    environment:
+      AXISPLIT_DECIDE_URL: ${AXISPLIT_DECIDE_URL:-http://decide:8080/v1}
+      AXISPLIT_DECIDE_MODEL: ${AXISPLIT_DECIDE_MODEL:-}
+      AXISPLIT_DECIDE_KEY: ${AXISPLIT_DECIDE_KEY:-}
+    restart: unless-stopped
+
+  decide-cpu:
+    <<: *decide
+    profiles: [cpu]
+    image: ghcr.io/ggml-org/llama.cpp:server-b11960
+    environment: {HF_HOME: /models}
+
+  decide-vulkan:
+    <<: *decide
+    profiles: [vulkan]
+    image: ghcr.io/ggml-org/llama.cpp:server-vulkan-b11960
+    devices: [/dev/dri]
+    environment: {HF_HOME: /models, LLAMA_ARG_DEVICE: "${AXISPLIT_DECIDE_DEVICE:-Vulkan0}"}
+
+  decide-cuda:
+    <<: *decide
+    profiles: [cuda]
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b11960
+    environment: {HF_HOME: /models, LLAMA_ARG_DEVICE: "${AXISPLIT_DECIDE_DEVICE:-CUDA0}"}
+    deploy: {resources: {reservations: {devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]}}}
+
+volumes:
+  data:
+  models:

@@ -4,12 +4,47 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { nixpkgs, flake-utils, ... }:
+  outputs = { self, nixpkgs, flake-utils, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
+    let
+      # The app's Python environment, built from uv.lock (wheels, as uv installs them).
+      workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
+      overlay = workspace.mkPyprojectOverlay { sourcePreference = "wheel"; };
+    in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        pythonSet = (pkgs.callPackage pyproject-nix.build.packages { python = pkgs.python312; })
+          .overrideScope (nixpkgs.lib.composeManyExtensions [ pyproject-build-systems.overlays.wheel overlay ]);
+        venv = pythonSet.mkVirtualEnv "axisplit-env" workspace.deps.default;
+        # RapidOCR's wheel ships the PP-OCRv6 models the app uses: read them there, no download.
+        ocrModels = pkgs.linkFarm "axisplit-ocr-models" {
+          rapidocr = "${venv}/${pythonSet.python.sitePackages}/rapidocr/models";
+        };
+        serve = pkgs.writeShellScriptBin "axisplit-serve" ''
+          set -euo pipefail
+          # The default data dir sits next to the source, read-only in the Nix store.
+          export AXISPLIT_DATA="''${AXISPLIT_DATA:-''${XDG_DATA_HOME:-$HOME/.local/share}/axisplit}"
+          export AXISPLIT_MODEL_CACHE="''${AXISPLIT_MODEL_CACHE:-${ocrModels}}"
+          exec ${venv}/bin/uvicorn axisplit.main:app \
+            --host "''${AXISPLIT_HOST:-127.0.0.1}" --port "''${AXISPLIT_PORT:-8000}" "$@"
+        '';
         llama = pkgs.llama-cpp.override { vulkanSupport = pkgs.stdenv.hostPlatform.isLinux; };
         # Decision model for the receipt total: answers /v1/systemone questions with
         # probabilities in one pass. Its attention is non-causal, so a whole request must
@@ -80,5 +115,14 @@
           echo "postgres up: DATABASE_URL=postgresql+asyncpg://$USER@localhost:5433/axisplit"
           echo "stop with: ${pkgs.postgresql}/bin/pg_ctl -D \"$PGDATA\" stop"
         '';
-      });
+
+        packages.default = serve;
+        apps.default = {
+          type = "app";
+          program = "${serve}/bin/axisplit-serve";
+          meta.description = "axisplit on http://127.0.0.1:8000";
+        };
+      }) // {
+      nixosModules.default = import ./nix/module.nix self;
+    };
 }

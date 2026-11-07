@@ -40,6 +40,9 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+axisplit = ["templates/*", "static/*"]  # without it a built wheel has no pages
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["."]  # tests import the bench package from the repo root
