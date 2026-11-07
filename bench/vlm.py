@@ -269,6 +269,7 @@ def score(args):
     for model_dir in sorted(p for p in PREDS.iterdir() if p.is_dir()):
         for mode in ("whole", "focus"):
             n_gt = n_pred = found = price_ok = on_line = sums_ok = totals_ok = errors = n_cases = 0
+            currencies_ok = n_currencies = 0  # readers only (bench.reader): vision runs don't read it
             ious, seconds = [], []
             for case in cases():
                 pf = model_dir / f"{case.name}.json"
@@ -286,6 +287,9 @@ def score(args):
                 ious += [pred_iou(p, g["quad"]) for g, p in pairs]
                 sums_ok += sum(p["price_cents"] for p in pred) == sum(g["price_cents"] for g in gt["items"])
                 totals_ok += pr["total"]["total_cents"] == gt["total"]["price_cents"]
+                if "currency" in pr and gt.get("currency"):
+                    n_currencies += 1
+                    currencies_ok += pr["currency"] == gt["currency"]
             if not n_cases:
                 continue
             rows.append({
@@ -294,13 +298,14 @@ def score(args):
                 "box_on_line": f"{on_line}/{n_gt}", "mean_iou": round(statistics.mean(ious), 2) if ious else 0,
                 "extra_items": n_pred - found, "sum_exact": f"{sums_ok}/{n_cases}",
                 "total_right": f"{totals_ok}/{n_cases}", "failed_calls": errors,
+                "currency_right": f"{currencies_ok}/{n_currencies}" if n_currencies else "–",
                 "median_s": round(statistics.median(seconds), 1) if seconds else None,
             })
     if args.json:
         print(json.dumps(rows, indent=1))
         return
     head = ["model", "size_gb", "mode", "items_found", "price_right", "box_on_line", "mean_iou", "extra_items",
-            "sum_exact", "total_right", "failed_calls", "median_s"]
+            "sum_exact", "total_right", "currency_right", "failed_calls", "median_s"]
     print("| " + " | ".join(head) + " |")
     print("|" + "---|" * len(head))
     for r in rows:

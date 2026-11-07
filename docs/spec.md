@@ -91,6 +91,23 @@ PENDING_CONFIRM → SETTLED (all items assigned and all token holders confirmed)
 
 Goal: from one crumpled receipt photo → `[{label, price_cents, currency, bbox}]`.
 
+**Readers.** The app reads receipts through one reader (`ocr.Backend`), chosen with
+`AXISPLIT_OCR_BACKEND`. Its contract is two calls:
+- `read(photo, area)` returns the items inside the marked area, with the printed total,
+  currency and extent of the whole photo;
+- `locate(photo)` returns where the receipt is, for the focus step.
+
+A reader owns its tuning, because its parts are tuned together; the app relies only on the
+contract. Only the items are required: a reader returns them even when the other parts
+fail. The total is read on its own, so it can check the items. Readers:
+- `paddle`, the default;
+- `vision`;
+- `http`: a reader running as its own service. Its API is in
+  [`reader-api.md`](reader-api.md), and every reply is validated before it's saved.
+- `stub`, for tests.
+
+`python -m bench.reader` scores any reader through the same `read()` call.
+
 **Current pipeline (`PaddleBackend`, the default):** PP-OCRv6 small through
 RapidOCR on the CPU reads the text lines and their quads. `receipt_rules` joins
 them into printed rows along the text's slope, finds the price column and returns
