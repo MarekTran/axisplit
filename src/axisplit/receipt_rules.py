@@ -17,6 +17,10 @@ DEC = r"-?\d{1,3}(?:[ .]\d{3})*[.,] ?\d{2}|-?\d+[.,] ?\d{2}"
 CZK = r"(?:K[cčćČĆ]|CZK)"  # OCR writes Kč as Kc / Kć
 AMOUNT = re.compile(rf"(?<![\d.,])(?:{DEC})(?![\d])|(?<![\d.,])-?\d{{1,3}}(?: \d{{3}})*(?=\s*{CZK}(?!\w))")
 PAREN = re.compile(r"\([^)]*\)")
+# A price printed mid-line ("1ks 21 % Premium 450,00 Kč"): it ends the row with a currency mark,
+# and the row has no unit-price marker ("5 ks x 72,00 Kč/ks").
+END_PRICE = re.compile(rf"(?:{DEC})\s*(?:{CZK}|€|EUR)\s*$")
+MULTIPLY = re.compile(r"(?<!\w)(?:x|×|à|@)(?!\w)|\*|/\s*(?:ks|kg|l|pcs|st)\b", re.I)
 QTY_HEAD = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*(?:x|×|ks|pcs|st|\.)?\s+", re.I)
 QTY_LINE = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*(?:kg|g|l)?\s*(?:\*|×|x\b|ks\b|pcs\b|st\b)", re.I)  # "3 ks *", "0,853 kg * 2,59"
 # Matched on accent-folded text. Several of these also label VAT or card-slip sums ("SPOLU", "TOTAL"):
@@ -179,8 +183,11 @@ def parse(lines, width, height):
             elif value is not None and value > 0 and not named:
                 sec["total"] = value  # unnamed negative amounts are the discounts' own sum
             continue
+        if amount is None and named and END_PRICE.search(text) and not MULTIPLY.search(text):
+            amount = amounts(text)[-1]
         if amount is None:
-            if named and not QTY_LINE.match(text):
+            # "5ks 21 % Pilsner" starts with a quantity but, with no amount, it is a name, not "3 ks * 0,79"
+            if named and (not QTY_LINE.match(text) or not amounts(text)):
                 pending.append(r)                      # a name waiting for its price, or a heading
             elif items:
                 items[-1]["lines"] += r["lines"]       # "3 ks * 0,79", "(€ 41,50)", "(5 x)"
