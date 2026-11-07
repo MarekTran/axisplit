@@ -57,7 +57,7 @@
 
   function resolveItem(clientX, clientY) {
     const image = imgwrap.querySelector("img").getBoundingClientRect();
-    const items = [...imgwrap.querySelectorAll(".box")].map((el) => ({
+    const items = [...imgwrap.querySelectorAll(".box[data-item]")].map((el) => ({  // not the draft
       id: el.dataset.item, el,
       x: parseFloat(el.style.left) / 100 * image.width,
       y: parseFloat(el.style.top) / 100 * image.height,
@@ -99,6 +99,8 @@
     if (add) place(add.dataset.add);
     const holder = event.target.closest(".holder");
     if (holder) send({ op: "unplace", item_id: holder.dataset.item, username: holder.dataset.user });
+    const edit = event.target.closest("[data-edit]");
+    if (edit) openItem(edit);
     const confirm = event.target.closest("[data-confirm]");
     if (confirm && !confirm.disabled) send({ op: confirm.dataset.confirm });
     const jump = event.target.closest("[data-jump]");
@@ -108,7 +110,7 @@
         box.scrollIntoView({ block: "center", behavior: "smooth" });
         highlight(box);
         const label = itemLabel(jump.dataset.jump);
-        feedback(`${label}: box in the wrong spot?`, () => startDrawing({ itemId: jump.dataset.jump, label }), "Redraw");
+        feedback(`${label}: box in the wrong spot?`, () => startDrawing({ itemId: jump.dataset.jump, label }), "Fix box");
       }
     }
   });
@@ -181,6 +183,7 @@
       const status = document.getElementById("status");
       status.textContent = next.dataset.statusLabel;
       status.className = `badge ${next.dataset.status}`;
+      syncPhoto();
       syncBoxTokens();
     } catch (error) { feedback(error.message); }
   }
@@ -259,47 +262,153 @@
     }
   }
   syncBoxTokens();  // Spreads out pips the server placed on top of each other.
+  // The photo follows the item list: deleted items' boxes go, restored or added ones appear,
+  // moved ones move, and box numbers match the rows again.
+  function syncPhoto() {
+    const layer = imgwrap.querySelector(".photo");
+    const rows = [...board.querySelectorAll(".item-review li[data-item]")];
+    const ids = new Set(rows.map((row) => row.dataset.item));
+    for (const box of layer.querySelectorAll(".box[data-item]")) if (!ids.has(box.dataset.item)) box.remove();
+    rows.forEach((row, i) => {
+      const id = row.dataset.item;
+      let box = layer.querySelector(`.box[data-item="${id}"]`);
+      if (!box) {
+        box = Object.assign(document.createElement("div"), { className: "box" });
+        box.dataset.item = id;
+        box.append(...["box-number", "lbl", "tokens"].map((className) => Object.assign(document.createElement("span"), { className })));
+        layer.insertBefore(box, layer.querySelector(".box.draft"));  // under the box being drawn
+      }
+      box.querySelector(".box-number").textContent = i + 1;
+      box.querySelector(".lbl").textContent = `${itemLabel(id)} — ${row.querySelector(".item-add .amount").textContent}`;
+      if (!box.classList.contains("editing")) {
+        const [x, y, w, h] = row.querySelector("[data-box]").dataset.box.split(" ").map(Number);
+        placeRect(box, { x, y, w, h });
+      }
+    });
+  }
+
+  // An item's dialog fixes a misread name or price, moves its box, or deletes it (with Undo).
+  const itemDialog = document.getElementById("item-dialog");
+  const itemForm = itemDialog.querySelector("form");
+  let editingItem = null;
+  function openItem(button) {
+    if (!who) { location.href = `/claim?next=${encodeURIComponent(location.pathname)}`; return; }
+    editingItem = button.dataset.edit;
+    const number = button.closest("li").querySelector(".item-jump").textContent;
+    itemDialog.querySelector("h2").textContent = `Edit item ${number}`;
+    itemForm.elements.label.value = itemLabel(editingItem);
+    itemForm.elements.price.value = (Number(button.dataset.price) / 100).toFixed(2).replace(".", ",");
+    itemDialog.showModal();
+  }
+  itemForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const body = new FormData(itemForm);
+    itemDialog.close();
+    changeItem(editingItem, "", body, (item) => `Saved ${item.label}.`);
+  });
+  itemDialog.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-item-action]")?.dataset.itemAction;
+    if (!action) return;
+    itemDialog.close();
+    if (action === "delete") deleteItem(editingItem);
+    if (action === "box") {
+      startDrawing({ itemId: editingItem, label: itemLabel(editingItem) });
+      imgwrap.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  });
+  function deleteItem(id) {
+    changeItem(id, "/delete", null, (item) => `Deleted ${item.label}.`,
+      () => changeItem(id, "/restore", null, (item) => `${item.label} is back.`));
+  }
+  // Queued with the token edits, so a delete and the taps around it stay in order.
+  function changeItem(id, action, body, message, undoAction = null) {
+    feedback("Saving…");
+    saving++;
+    queue = queue.then(async () => {
+      try {
+        const response = await fetch(`/r/${rid}/items/${id}${action}`, { method: "POST", body });
+        const item = await response.json();
+        if (!response.ok) throw new Error(item.detail || "Couldn’t save. Please try again.");
+        feedback(message(item), undoAction);
+      } catch (error) {
+        feedback(error.message || "Connection lost. Your change wasn’t confirmed; please retry.");
+      }
+    }).finally(() => { if (!--saving) refreshReview(); });
+  }
+  // Just added from "Add a missing item": show where it went, and offer to take it back.
+  const added = new URLSearchParams(location.search).get("added");
+  if (added) {
+    history.replaceState(null, "", location.pathname);
+    const box = imgwrap.querySelector(`.box[data-item="${added}"]`);
+    // Once the photo has its height, else the box isn't where it will be.
+    if (box) imgwrap.querySelector("img").decode().catch(() => {}).then(() => { box.scrollIntoView({ block: "center" }); highlight(box); });
+    feedback(`Added ${itemLabel(added)}. Edit it from the list.`, () => deleteItem(added));
+  }
   // Drawing a box on the photo: for a missing item (while "Add a missing item" is open), or to
-  // move an item's box where it is really printed.
+  // move an item's box where it is really printed. Either way the box can be adjusted (corners,
+  // moving it) until it is saved; the bar under the photo says how and holds Save and Cancel.
   let drawing = null;  // { itemId, label } when redrawing, {} when adding a missing item
   let drewAt = 0;
-  const draft = Object.assign(document.createElement("div"), { className: "box draft", hidden: true });
-  imgwrap.querySelector(".photo").append(draft);  // Boxes are placed in % of the whole photo.
   const manual = document.getElementById("manual-entry");
+  const bar = document.getElementById("box-editor");
+  const editor = boxEditor(imgwrap, imgwrap.querySelector("img"), imgwrap.querySelector(".photo"), () => drawing, (rect, done) => {
+    if (done) drewAt = Date.now();
+    paintBar();
+    if (drawing.itemId) return;  // Saved with the bar's button.
+    const form = manual.querySelector("form");
+    for (const [key, value] of Object.entries(center(rect))) {
+      Object.assign(form.elements[key], { value: value.toFixed(4), disabled: false });
+    }
+  });
+  const center = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2, w: r.w, h: r.h });
+  function paintBar() {
+    const has = Boolean(editor.get());
+    bar.querySelector("span").textContent = !has
+      ? (drawing.itemId ? `Drag over ${drawing.label} on the photo.` : "Drag across the missing line on the photo.")
+      : "Drag a corner to resize, or the box to move.";
+    const done = bar.querySelector('[data-editor="done"]');
+    done.textContent = drawing.itemId ? "Save box" : "Name it";
+    done.hidden = !has;
+  }
   function startDrawing(mode) {
+    stopDrawing();
     drawing = mode;
     imgwrap.classList.add("drawing");
-    document.getElementById("selection-hint").textContent = mode.itemId
-      ? `Drag over ${mode.label}` : "Drag over the missing line";
-    if (mode.itemId) feedback(`Drag over ${mode.label} on the photo.`, stopDrawing, "Cancel");
+    document.getElementById("board-feedback").hidden = true;  // The bar takes its place.
+    document.getElementById("selection-hint").textContent = mode.itemId ? `Adjust ${mode.label}’s box` : "Mark the missing line";
+    const box = mode.itemId && imgwrap.querySelector(`.box[data-item="${mode.itemId}"]`);
+    if (box) {  // Start from where the box is now; the original hides while it's edited.
+      box.classList.add("editing");
+      editor.set(Object.fromEntries(["left", "top", "width", "height"].map((k, i) => ["xywh"[i], parseFloat(box.style[k]) / 100])));
+    }
+    bar.hidden = false;
+    paintBar();
   }
   function stopDrawing() {
+    if (!drawing) return;
     drawing = null;
     imgwrap.classList.remove("drawing");
-    draft.hidden = true;
+    imgwrap.querySelector(".box.editing")?.classList.remove("editing");
+    editor.set(null);
+    bar.hidden = true;
     paintSelection();
   }
   manual?.addEventListener("toggle", () => (manual.open ? startDrawing({}) : stopDrawing()));
-  dragRect(imgwrap, imgwrap.querySelector("img"), () => drawing, (rect, done) => {
-    if (done && rect.w < 0.02 && rect.h < 0.02) {  // A tap: a line-sized box centered on it.
-      rect = { x: rect.x - 0.3, y: rect.y - 0.025, w: 0.6, h: 0.05 };
-    }
-    draft.hidden = false;
-    placeRect(draft, rect);
-    if (!done) return;
-    drewAt = Date.now();
-    const center = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2, w: rect.w, h: rect.h };
+  bar.querySelector('[data-editor="cancel"]').addEventListener("click", () => {
+    if (drawing && !drawing.itemId) manual.open = false;  // Its toggle stops drawing.
+    else stopDrawing();
+  });
+  bar.querySelector('[data-editor="done"]').addEventListener("click", () => {
+    const rect = editor.get();
+    if (!rect) return;
     if (drawing.itemId) {
-      saveBox(drawing.itemId, center);
+      saveBox(drawing.itemId, center(rect));
       stopDrawing();
       return;
     }
     const form = manual.querySelector("form");
-    for (const [key, value] of Object.entries(center)) {
-      Object.assign(form.elements[key], { value: value.toFixed(4), disabled: false });
-    }
-    form.elements.label.focus({ preventScroll: true });
     form.scrollIntoView({ block: "center", behavior: "smooth" });
+    form.elements.label.focus({ preventScroll: true });
   });
   async function saveBox(itemId, center) {
     const body = new FormData();

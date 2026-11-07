@@ -59,6 +59,8 @@
         {% endfor %}
         </div>
       </div>
+      <div class="box-editor-bar" id="box-editor" role="status" hidden><span></span>
+        <button type="button" class="text-button" data-editor="cancel">Cancel</button><button type="button" data-editor="done" hidden>Save box</button></div>
       <details class="panel manual-entry" id="manual-entry"><summary>{{ icon("plus") }}Add a missing item</summary>
         <p class="muted">Drag across the line on the photo, then name it. Check the price on the receipt.</p>
         <form method="post" action="/r/{{ receipt.id }}/items" class="manual-form">
@@ -73,7 +75,21 @@
   </div>
 </div>
 <div id="board-feedback" class="feedback-toast" role="status" aria-live="polite" hidden><span></span><button type="button" id="undo-token" hidden>Undo</button></div>
+{# One dialog for every item: receipt.js fills it from the row's Edit button. #}
+<dialog id="item-dialog" class="item-dialog" aria-labelledby="item-dialog-title">
+  <form method="dialog" class="item-form">
+    <h2 id="item-dialog-title">Edit item</h2>
+    <label>Item name<input name="label" required maxlength="120" autocomplete="off"></label>
+    <label>Price<input name="price" required inputmode="decimal" autocomplete="off"></label>
+    <button type="button" class="secondary" data-item-action="box">{{ icon("move") }}Move its box on the photo</button>
+    <div class="dialog-actions">
+      <button type="button" class="text-button danger-text" data-item-action="delete">{{ icon("trash") }}Delete item</button>
+      <button type="button" class="secondary" data-item-action="cancel">Cancel</button>
+      <button>Save</button>
+    </div>
+  </form>
+</dialog>
 <script src="/static/hit-test.js?v=3" defer></script>
-<script src="/static/drag-rect.js?v=1" defer></script>
-<script src="/static/receipt.js?v=8" defer></script>
+<script src="/static/drag-rect.js?v=2" defer></script>
+<script src="/static/receipt.js?v=10" defer></script>
 {% endblock %}

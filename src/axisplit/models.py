@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -88,6 +88,8 @@ class Item(Base):
     w: Mapped[float] = mapped_column(Float, default=1.0)
     h: Mapped[float] = mapped_column(Float, default=0.08)
     ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Deleted from the receipt, kept with its tokens so Undo brings it back as it was.
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     receipt: Mapped[Receipt] = relationship(back_populates="items")
     tokens: Mapped[list["TokenAssignment"]] = relationship(cascade="all, delete-orphan")

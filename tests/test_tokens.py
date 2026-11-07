@@ -37,7 +37,10 @@ def test_existing_databases_get_the_new_columns():
         conn.execute(text("CREATE TABLE receipts (id VARCHAR PRIMARY KEY)"))
         conn.execute(text("INSERT INTO token_assignments VALUES ('i', 'Adam')"))
         conn.execute(text("INSERT INTO receipts VALUES ('r')"))
+        conn.execute(text("CREATE TABLE items (id VARCHAR PRIMARY KEY)"))
+        conn.execute(text("INSERT INTO items VALUES ('i')"))
         add_missing_columns(conn)
         add_missing_columns(conn)  # idempotent on every startup
         assert conn.execute(text("SELECT count FROM token_assignments")).scalar_one() == 1
         assert conn.execute(text("SELECT focus_w, printed_total_cents FROM receipts")).one() == (None, None)
+        assert conn.execute(text("SELECT deleted FROM items")).scalar_one() == 0  # existing items stay

@@ -1,6 +1,8 @@
 """Semantic operations on receipts, shared by the HTTP (htmx) and WebSocket
 paths. Each op returns a broadcast event dict; status is recomputed."""
 
+import re
+
 from fastapi import HTTPException
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +41,7 @@ def involved_users(items: list[Item]) -> set[str]:
 async def get_receipt_items(session: AsyncSession, receipt_id: str) -> list[Item]:
     stmt = (
         select(Item)
-        .where(Item.receipt_id == receipt_id)
+        .where(Item.receipt_id == receipt_id, Item.deleted.is_(False))
         .options(selectinload(Item.tokens))
         .order_by(Item.y, Item.x)
     )
@@ -61,7 +63,7 @@ async def apply_op(session: AsyncSession, tab: Tab, receipt_id: str, op: dict) -
         if not (target or "").strip():
             raise HTTPException(422, "username required")
         item = await session.get(Item, item_id)
-        if item is None or item.receipt_id != receipt_id:
+        if item is None or item.receipt_id != receipt_id or item.deleted:
             raise HTTPException(404, "item not found")
         # place adds one more of target's tokens, unplace takes one off. Single UPDATE/DELETE
         # statements, so rapid taps from several phones can't lose a count.
@@ -131,3 +133,17 @@ async def add_item(session: AsyncSession, receipt: Receipt, label: str, price_ce
     await session.commit()
     await recompute_status(session, receipt)
     return item
+
+
+def parse_cents(price: str) -> int:
+    """A price as people type or copy it ("2,10", "1 035,00 Kč", "-0.50") -> cents; ValueError if none."""
+    text = re.sub(r"[^\d,.\-]", "", price)
+    if "," in text and "." in text:  # the last one is the decimal mark, the other groups thousands
+        mark = max(text.rfind(","), text.rfind("."))
+        text = re.sub(r"[,.]", "", text[:mark]) + "." + text[mark + 1:]
+    return round(float(text.replace(",", ".")) * 100)
+
+
+async def drop_confirmations(session: AsyncSession, receipt_id: str) -> None:
+    """Shares changed, so what people agreed to no longer holds."""
+    await session.execute(delete(Confirmation).where(Confirmation.receipt_id == receipt_id))
