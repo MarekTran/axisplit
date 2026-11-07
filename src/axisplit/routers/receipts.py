@@ -54,36 +54,23 @@ async def detect_receipt(session: AsyncSession, receipt: Receipt) -> str:
     path = UPLOAD_DIR / receipt.image_path
     focus = clean_focus(receipt.focus_x, receipt.focus_y, receipt.focus_w, receipt.focus_h)
     quad = clean_quad(receipt.focus_quad) if focus else None
-    # Two independent reads: the items (inside the focus area) and the printed total (whole photo),
-    # so the total can check the items. A failed total never blocks the items.
-    extracted, total = await asyncio.gather(
-        asyncio.to_thread(ocr.extract_items, path, focus, quad),
-        asyncio.to_thread(ocr.extract_total, path),
-        return_exceptions=True,
-    )
-    if isinstance(total, Exception):
-        logger.error("Receipt total OCR failed for %s", receipt.id, exc_info=total)
-    else:
-        receipt.printed_total_cents = total
+    # The reader returns the items even when the printed total, currency or extent fail; the total
+    # is read on its own, so it can check the items.
     try:
-        extent = await asyncio.to_thread(ocr.text_extent, path)
-        code = await asyncio.to_thread(ocr.currency, path)
+        reading = await asyncio.to_thread(ocr.read, path, quad or (ocr.corners(focus) if focus else None))
     except Exception:
-        logger.exception("Receipt text extent or currency failed for %s", receipt.id)
-    else:
-        if extent:
-            receipt.view_x, receipt.view_y, receipt.view_w, receipt.view_h = extent
-        if code in CURRENCIES:  # else it keeps this device's last receipt's (see upload_receipt)
-            receipt.currency = code
-    if isinstance(extracted, Exception):
-        logger.error("Receipt OCR failed for %s", receipt.id, exc_info=extracted)
-        await session.commit()
+        logger.exception("Receipt OCR failed for %s", receipt.id)
         return "failed"
-    for ex in extracted:
+    receipt.printed_total_cents = reading.total_cents
+    if reading.extent:
+        receipt.view_x, receipt.view_y, receipt.view_w, receipt.view_h = reading.extent
+    if reading.currency in CURRENCIES:  # else it keeps this device's last receipt's (see upload_receipt)
+        receipt.currency = reading.currency
+    for ex in reading.items:
         session.add(ex.to_item(receipt.id))
     await session.commit()
     await recompute_status(session, receipt)
-    return "ok" if extracted else "empty"
+    return "ok" if reading.items else "empty"
 
 
 def normalize_pixels(path: Path, rotation: float = 0.0) -> None:
@@ -159,7 +146,7 @@ async def focus_hint(image: UploadFile = File(...)):
         f.write(data)
         f.flush()
         try:
-            extent = await asyncio.to_thread(ocr.text_extent, Path(f.name))
+            extent = await asyncio.to_thread(ocr.locate, Path(f.name))
         except Exception:
             logger.exception("Focus hint failed")
             extent = None
