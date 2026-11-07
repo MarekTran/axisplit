@@ -88,6 +88,40 @@ AXISPLIT_OCR_BACKEND=stub bash scripts/smoke.sh
 AXISPLIT_OCR_BACKEND=stub uv run python scripts/ws_smoke.py
 ```
 
+## Deploy
+
+The flake builds the app from `uv.lock` with [uv2nix](https://github.com/pyproject-nix/uv2nix);
+the OCR models come with it, so nothing is downloaded at runtime. The database and
+photos go to `AXISPLIT_DATA` (default `~/.local/share/axisplit`):
+
+```bash
+nix run github:MarekTran/axisplit                     # http://127.0.0.1:8000
+AXISPLIT_HOST=0.0.0.0 AXISPLIT_PORT=8080 nix run .    # from a checkout
+```
+
+On NixOS, with the flake as an input:
+
+```nix
+imports = [ axisplit.nixosModules.default ];
+services.axisplit = {
+  enable = true;              # http://127.0.0.1:8000, data in /var/lib/axisplit
+  # host = "0.0.0.0"; openFirewall = true;
+  decide.enable = true;       # decision model for totals; first start downloads 2.6 GB
+  decide.device = "Vulkan1";  # needs hardware.graphics.enable; "none" for CPU only
+};
+```
+
+Docker: the build runs Nix in a throwaway stage, so the host needs only Docker, and
+the image holds just the app's runtime closure:
+
+```bash
+docker build -t axisplit .
+docker run -p 8000:8000 -v axisplit-data:/data axisplit
+```
+
+Without the decision model, totals come from the rules alone (see above);
+`AXISPLIT_DECIDE_URL` points either deployment at one.
+
 ## OCR benchmark
 
 ```bash
