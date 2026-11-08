@@ -207,6 +207,7 @@ The question is which labelled amount line holds the total. Its wording is `ocr.
 | Qwen3-VL-4B, a separate vision call on the photo | | 3.0 GB | 18/19 | 16/19 | several s |
 | **vllm-d3-nano, OCR text (in the app)** | 2.4B | 2.6 GB | **17/19** | 17/19 | **0.10** |
 | vllm-d3-nano, OCR text + photo | 2.4B | 2.9 GB | 17/19 | 17/19 | 0.69 |
+| vllm-d3-lite, OCR text (bundled) | 1.0B | 1.1 GB | 17/19 | 15/19 | on the CPU: below |
 | vllm-d3-edge, OCR text | 0.75B | 0.8 GB | 14/19 | 16/19 | 0.04 |
 | vllm-d3-edge, OCR text, on the CPU | 0.75B | 0.8 GB | 14/19 | – | 0.67 |
 | vllm-d3-edge, OCR text + photo | 0.75B | | 16/19 | 17/19 | 0.30 |
@@ -227,11 +228,33 @@ The question is which labelled amount line holds the total. Its wording is `ocr.
   - on the other, the total line wasn't read at all.
 - **Where gains are left:** reading the receipt, not picking from it.
 - **Size helped on one receipt of 38:** flash got one tune receipt that nano missed.
-- **The photo doesn't help nano,** and makes it 7× slower. Without the photo, `axisplit-decide` passes `--no-mmproj`, which saves the 365 MB vision projector.
+- **The photo doesn't help nano,** and makes it 7× slower. Without the photo, `axisplit-decide` loads no vision projector, which saves 365 MB.
 - **Confidence isn't a usable gate.**
   - Across both halves, nano was right on 27 of the 30 picks it gave a confidence of 0.5–0.9.
   - Qwen's picker was wrong on three picks it gave 0.94 or more.
 - **The add-up check is usable.** When the focus-area items added up to nano's pick, the whole receipt was right on 10 of 10 held-out receipts and 13 of 14 tune receipts. The exception had two misread items whose errors cancelled out.
+
+### On the CPU, end to end
+
+The model runs on the CPU next to the app by default, so it was chosen on upload times there. Each upload went through the app (`POST` with the photo and the items area, until the redirect), on all 46 labelled receipts, then 10 pairs of uploads at once. The model is llama.cpp's Vulkan build with `--device none`: the plain build links BLAS, and made the model 1.5× slower here. lite ran as bundled, with `-ub 4096`; the others with `-ub 8192`. Ryzen 7 7800X3D; "4 CPUs" is the app and the model pinned to 4 of its cores with `taskset`.
+
+| CPUs | totals from | median s | p90 | slowest | slowest of two at once | first upload | model RAM | model ready |
+|---|---|---|---|---|---|---|---|---|
+| 8 cores | rules only | 0.76 | 1.21 | 1.32 | 1.96 | 0.98 | – | – |
+| 8 cores | vllm-d3-nano | 4.33 | 6.46 | 8.60 | 12.0 | 3.42 | 3.3 GB | 2.8 s |
+| 8 cores | **vllm-d3-lite** | **2.34** | 3.58 | 5.60 | 8.10 | 1.89 | 1.6 GB | 1.5 s |
+| 8 cores | vllm-d3-edge | 1.55 | 2.44 | 3.03 | 4.26 | 1.52 | 1.5 GB | 1.3 s |
+| 4 CPUs | rules only | 1.66 | 2.78 | 3.14 | 4.35 | 1.43 | – | – |
+| 4 CPUs | vllm-d3-nano | 8.34 | 12.97 | 16.25 | 23.45 | 5.83 | 3.3 GB | 2.7 s |
+| 4 CPUs | **vllm-d3-lite** | **4.60** | 7.17 | 8.96 | 12.48 | 3.22 | 1.6 GB | 1.4 s |
+| 4 CPUs | vllm-d3-edge | 3.07 | 4.96 | 6.01 | 8.06 | 3.05 | 1.6 GB | 1.3 s |
+
+- **lite is bundled.** It gets nano's 17 of 19 unseen totals right in about half the time and RAM. On the tune half it gets 2 fewer, on a question worded with nano. edge is faster still, but gets 3 fewer unseen totals right.
+- **The app** peaks at 0.6–0.8 GB. "First upload" includes loading the OCR models; "model ready" is from starting the model, its file evicted from the page cache, to its health check passing.
+- **Threads.** On 4 CPUs, the model ran 5% slower with 8 threads than with 4, so it takes one per CPU it may use. The OCR used to count the host's CPUs: pinned to 4 of 16, it ran 8 threads on them and took 3.4 s per upload with rules alone. It now counts the CPUs it may use (1.7 s).
+- **Two at once** wait for each other: one OCR engine and one model slot.
+- **The deadline** (`AXISPLIT_DECIDE_TIMEOUT`, 15 s) is above the slowest upload on 4 CPUs. A slower machine takes the rules' total past it.
+- **A 4 GB machine:** at `-ub 8192`, lite reserves 6.3 GB of address space for its graph (it touches 1.8 GB), which a 4 GB machine without swap refuses: the server aborts on start. The longest question here is 2,176 tokens, so it runs with `-ub 4096`: 3.2 GB reserved, 1.6 GB used.
 
 ### Per-item check (not in the app)
 

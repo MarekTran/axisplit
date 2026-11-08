@@ -1,0 +1,27 @@
+# The app reads receipts on the CPU, and a small decision model, also on the CPU, picks each
+# receipt's total. See "Self-hosting" in the README.
+#   docker compose up -d          both
+#   docker compose up -d app      the app alone, with AXISPLIT_DECIDE_URL set to a server of
+#                                 your own (on a GPU, say), or to none for the rules alone
+services:
+  app:
+    build: {context: ., target: app}
+    image: axisplit
+    ports: ["${AXISPLIT_PORT:-8000}:8000"]
+    volumes: [data:/data]
+    environment:
+      AXISPLIT_DECIDE_URL: ${AXISPLIT_DECIDE_URL:-http://decide:8082/v1}
+      AXISPLIT_DECIDE_MODEL: ${AXISPLIT_DECIDE_MODEL:-}
+      AXISPLIT_DECIDE_KEY: ${AXISPLIT_DECIDE_KEY:-}
+      AXISPLIT_DECIDE_TIMEOUT: ${AXISPLIT_DECIDE_TIMEOUT:-}
+    restart: unless-stopped
+
+  decide:
+    build: {context: ., target: decide}
+    image: axisplit-decide
+    environment:
+      AXISPLIT_DECIDE_THREADS: ${AXISPLIT_DECIDE_THREADS:-}  # empty: one per CPU it sees
+    restart: unless-stopped
+
+volumes:
+  data:

@@ -1,0 +1,10 @@
+# Only what `nix build` reads: keeps receipt photos, data, .env, .git and .venv out of the build.
+*
+!flake.nix
+!flake.lock
+!pyproject.toml
+!uv.lock
+!src/
+!nix/
+**/__pycache__
+**/*.egg-info

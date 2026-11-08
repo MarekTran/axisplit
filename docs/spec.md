@@ -108,14 +108,15 @@ fail. The total is read on its own, so it can check the items. Readers:
 **Current pipeline (`PaddleBackend`, the default):** PP-OCRv6 small through
 RapidOCR on the CPU reads the text lines and their quads. `receipt_rules` joins
 them into printed rows along the text's slope, finds the price column and returns
-items (label, line-total price, box). A decision model (vllm-d3-nano, 2.4B,
-Apache-2.0) served by llama.cpp's `/v1/systemone` picks which amount line is the
-total, from the OCR text alone. Automatic on upload, retryable on empty receipts.
+items (label, line-total price, box). A decision model (vllm-d3-lite, 1.0B,
+Apache-2.0) served by llama.cpp's `/v1/systemone`, also on the CPU, picks which
+amount line is the total, from the OCR text alone. Automatic on upload, retryable on empty receipts.
 Benchmarked on 38 privately labelled receipts (rules tuned on 19, frozen, the
 other 19 scored once). On the unseen 19, with a focus area: 219 of 244 prices
 right and 1 extra item; totals right on 17 of 19 (rules alone 11; Qwen3-VL-4B
-reading the photo 18, at ~8 s each). About a second per upload: two OCR passes on
-an 8-core CPU, then 0.1 s on the GPU for the total. All results:
+reading the photo 18, at ~8 s each). Per upload on an 8-core CPU, 2.3 s at the
+median: 0.8 s for two OCR passes, the rest for the total (0.1 s with the model on a
+GPU); 4.6 s on 4 CPUs. All results:
 [`docs/benchmarks.md`](benchmarks.md).
 
 **Vision backend** (`AXISPLIT_OCR_BACKEND=vision`): Qwen3-VL-4B via a local

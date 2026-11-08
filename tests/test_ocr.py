@@ -184,7 +184,7 @@ def test_decision_model_picks_the_total_from_the_amount_lines(paddle, monkeypatc
     sent = {}
 
     def respond(url, **kwargs):
-        sent["url"], sent["body"] = url, kwargs["json"]
+        sent["url"], sent["body"], sent["headers"] = url, kwargs["json"], kwargs["headers"]
         total = sent["body"]["questions"]["total"]
         letter = next(k for k, line in total["criteria"].items() if line.startswith("TOTAL"))
         return httpx.Response(200, request=httpx.Request("POST", url),
@@ -199,14 +199,48 @@ def test_decision_model_picks_the_total_from_the_amount_lines(paddle, monkeypatc
         "Beer 0,5l 4,50", "Nachos 8,90", "SUBTOTAL 13,40", "TOTAL 12,40", "VAT 21% 2,15"]
     assert "A) Beer 0,5l 4,50" in sent["body"]["state"]["receipt_lines"]
     assert "   Discount -1,00" in sent["body"]["state"]["receipt_lines"]
+    assert "model" not in sent["body"] and sent["headers"] is None  # llama.cpp needs neither
+
+
+def test_decision_server_elsewhere_with_a_model_name_and_key(paddle, monkeypatch):
+    backend, _, image = paddle
+    sent = {}
+
+    def respond(url, **kwargs):
+        sent.update(url=url, model=kwargs["json"].get("model"), headers=kwargs["headers"],
+                    deadline=kwargs["timeout"].read)
+        return httpx.Response(200, request=httpx.Request("POST", url),
+                              json={"answers": {"total": {"choice": "D"}}})
+
+    monkeypatch.setattr(httpx, "post", respond)
+    monkeypatch.setenv("AXISPLIT_DECIDE_URL", "https://gpu-box:8000/v1/")
+    monkeypatch.setenv("AXISPLIT_DECIDE_MODEL", "vllm-sr/d3-nano")
+    monkeypatch.setenv("AXISPLIT_DECIDE_KEY", "s3cret")
+    monkeypatch.setenv("AXISPLIT_DECIDE_TIMEOUT", "3")
+    assert backend.read(image).total_cents == 1240
+    assert sent == {"url": "https://gpu-box:8000/v1/systemone", "model": "vllm-sr/d3-nano",
+                    "headers": {"Authorization": "Bearer s3cret"}, "deadline": 3}
+
+
+def test_rules_alone_when_asked(paddle, monkeypatch, caplog):
+    backend, _, image = paddle
+    monkeypatch.setattr(httpx, "post", lambda *a, **kw: pytest.fail("asked the decision model"))
+    monkeypatch.setenv("AXISPLIT_DECIDE_URL", "none")
+    assert backend.read(image).total_cents == 1240
+    assert "unavailable" not in caplog.text  # a choice, not a failure
+
+
+def slow(url, **kwargs):
+    raise httpx.ReadTimeout("past the deadline", request=httpx.Request("POST", url))
 
 
 @pytest.mark.parametrize("respond", [
     refuse,  # down
+    slow,
     answer(json={"answers": {"total": {"choice": "Z"}}}),  # not one of the candidates
     answer(json={"answers": {}}),
     answer(text="<html>Bad gateway</html>"),
-], ids=["down", "unknown-letter", "no-answer", "not-json"])
+], ids=["down", "slow", "unknown-letter", "no-answer", "not-json"])
 def test_rules_give_the_total_without_a_usable_decision(paddle, monkeypatch, caplog, respond):
     backend, _, image = paddle
     monkeypatch.setattr(httpx, "post", respond)
