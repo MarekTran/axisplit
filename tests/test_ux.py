@@ -1,21 +1,25 @@
 """Interaction constraints and mistake recovery, isolated from the running app DB."""
 
+import asyncio
 import io
 import json
+import os
 from types import SimpleNamespace
 
 import httpx
+import pytest
 import pytest_asyncio
 from PIL import Image
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from axisplit import images, ocr
+from axisplit import ocr
 from axisplit.db import get_session
 from axisplit.main import app
-from axisplit.models import Base, Confirmation, Item, Receipt, TokenAssignment
+from axisplit.models import Base, Item, Person, Receipt, TokenAssignment
 from axisplit.routers import receipts
-from axisplit.viewmodels import money, money_by_currency, photo_view
+from axisplit.split import totals
+from axisplit.viewmodels import money, photo_view
 
 
 @pytest_asyncio.fixture
@@ -23,17 +27,18 @@ async def client(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
     uploads.mkdir()
     monkeypatch.setattr(receipts, "UPLOAD_DIR", uploads)
-    monkeypatch.setattr(images, "UPLOAD_DIR", uploads)
-    # What the reader returns; currency unread: the tab's last receipt's, else EUR.
+    # What the reader returns; currency unread: this device's last receipt's, else EUR.
     reader = SimpleNamespace(total=1390, currency=None, areas=[])
     monkeypatch.setattr(ocr, "read", lambda _, area: reader.areas.append(area) or ocr.Reading([
         ocr.ExtractedItem("Mango tea", 695, .2, .4, .6, .02),
         ocr.ExtractedItem("Watermelon tea", 695, .2, .43, .6, .02),
     ], reader.total, reader.currency, (.15, .3, .7, .4)))
     monkeypatch.setattr(ocr, "locate", lambda _: (.15, .3, .7, .4))
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    # AXISPLIT_TEST_DATABASE_URL runs the tests on another database, e.g. a scratch Postgres one (emptied).
+    engine = create_async_engine(os.environ.get("AXISPLIT_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     async def isolated_session():
@@ -44,7 +49,6 @@ async def client(tmp_path, monkeypatch):
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                      base_url="http://test", follow_redirects=True) as c:
-            await c.post("/claim", data={"username": "Adam", "next": "/"})
             c.sessions = sessions
             c.reader, c.focus = reader, reader.areas
             yield c
@@ -59,13 +63,13 @@ def photo(color="white"):
     return buffer.getvalue()
 
 
-async def upload(client):
-    tab = await client.post("/tabs", data={"name": "Dinner"})
-    tab_id = tab.url.path.rsplit("/", 1)[-1]
-    page = await client.post(f"/t/{tab_id}/receipts", files={
-        "image": ("check.jpg", photo(), "image/jpeg"),
-    })
-    return tab_id, page.url.path.rsplit("/", 1)[-1]
+async def upload(client, *people, **data):
+    """A receipt with these people on it (Adam unless named); returns its id."""
+    page = await client.post("/receipts", files={"image": ("check.jpg", photo(), "image/jpeg")}, data=data)
+    receipt_id = page.url.path.rsplit("/", 1)[-1]
+    for name in people or ("Adam",):
+        assert (await client.post(f"/r/{receipt_id}/people", data={"username": name})).status_code == 200
+    return receipt_id
 
 
 async def items_for(client, receipt_id):
@@ -78,87 +82,122 @@ async def op(client, receipt_id, kind, **kwargs):
     return await client.post(f"/r/{receipt_id}/ops", json={"op": kind, **kwargs})
 
 
-async def test_duplicate_upload_opens_existing_receipt(client):
-    tab_id, receipt_id = await upload(client)
-    duplicate = await client.post(f"/t/{tab_id}/receipts", files={
-        "image": ("renamed.jpg", photo(), "image/jpeg"),
-    })
-    assert duplicate.status_code == 200
-    assert duplicate.url.path == f"/r/{receipt_id}"
-    assert duplicate.url.params["duplicate"] == "1"
-    assert "already in the tab" in duplicate.text
+async def people(client, receipt_id):
     async with client.sessions() as session:
-        assert len(list(await session.scalars(select(Receipt)))) == 1
+        return {p.username: p for p in await session.scalars(select(Person).where(Person.receipt_id == receipt_id))}
 
 
-async def test_confirmation_requires_all_items_assigned(client):
-    _, receipt_id = await upload(client)
+async def test_anyone_with_the_link_splits_without_signing_in(client):
+    receipt_id = await upload(client)
+    first, _ = await items_for(client, receipt_id)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as friend:
+        page = await friend.get(f"/r/{receipt_id}")  # no cookies, no name to claim
+        assert page.status_code == 200 and "Share link" in page.text
+        assert (await friend.post(f"/r/{receipt_id}/people", data={"username": "Nina"})).status_code == 200
+        placed = await friend.post(f"/r/{receipt_id}/ops", json={"op": "place", "item_id": first.id, "username": "Adam"})
+        assert placed.json()["username"] == "Adam"  # for anyone on the receipt, not only "yourself"
+    assert (await op(client, receipt_id, "place", item_id=first.id, username="Ghost")).status_code == 404
+    assert (await client.get("/r/nope")).status_code == 404
+
+
+async def test_people_are_added_by_name_and_removed_with_their_tokens(client):
+    receipt_id = await upload(client, "Adam", "Nina")
+    assert (await client.post(f"/r/{receipt_id}/people", data={"username": " nina "})).status_code == 409
+    assert (await client.post(f"/r/{receipt_id}/people", data={"username": "  "})).status_code == 422
     first, second = await items_for(client, receipt_id)
-    await op(client, receipt_id, "place", item_id=first.id, username="Adam")
-    partial = await op(client, receipt_id, "confirm")
-    assert partial.status_code == 409
-    assert "Assign every item" in partial.text
-    await op(client, receipt_id, "place", item_id=second.id, username="Adam")
-    confirmed = await op(client, receipt_id, "confirm")
-    assert confirmed.json()["status"] == "settled"
+    for name, item in (("Adam", first), ("Nina", first), ("Nina", second)):
+        await op(client, receipt_id, "place", item_id=item.id, username=name)
+    before = await people(client, receipt_id)
+    assert before["Adam"].color != before["Nina"].color
+
+    removed = await client.post(f"/r/{receipt_id}/people/remove", data={"username": "Nina"})
+    assert removed.json() == {"username": "Nina", "removed": True}
+    first, second = await items_for(client, receipt_id)
+    assert [t.username for t in first.tokens] == ["Adam"] and not second.tokens  # Adam has all of the first now
     review = await client.get(f"/r/{receipt_id}/review")
-    assert "You agreed to your 13,90\u00a0€ share" in review.text
-    assert "Withdraw my confirmation" in review.text
-    await op(client, receipt_id, "unplace", item_id=second.id, username="Adam")
-    review = await client.get(f"/r/{receipt_id}/review")
-    assert "Assign every item before confirming" in review.text
-    assert "You agreed" not in review.text
+    assert "Nina" not in review.text and "1/2 assigned" in review.text
+    assert (await client.post(f"/r/{receipt_id}/people/remove", data={"username": "Nina"})).status_code == 404
+    again = await client.post(f"/r/{receipt_id}/people", data={"username": "Marek"})
+    assert again.json()["color"] == before["Nina"].color  # the freed color, not Adam's
 
 
-async def test_remove_and_undo_preserves_tokens_and_confirmations(client):
-    _, receipt_id = await upload(client)
-    for item in await items_for(client, receipt_id):
-        await op(client, receipt_id, "place", item_id=item.id, username="Adam")
-    await op(client, receipt_id, "confirm")
-    removed = await client.post(f"/r/{receipt_id}/remove")
-    assert removed.status_code == 200
-    assert "Undo removal" in removed.text
-    assert "0,00\u00a0€" in removed.text
-    assert 'class="receipt-card ' not in removed.text
-    blocked = await op(client, receipt_id, "confirm")
-    assert blocked.status_code == 410
-    restored = await client.post(f"/r/{receipt_id}/restore")
-    assert "Receipt restored" in restored.text
-    assert "13,90\u00a0€" in restored.text
-    async with client.sessions() as session:
-        receipt = await session.get(Receipt, receipt_id)
-        assert receipt.status == "settled"
-        assert len(list(await session.scalars(select(TokenAssignment)))) == 2
-        assert len(list(await session.scalars(select(Confirmation)))) == 1
-
-
-async def test_nonmember_cannot_remove_receipt(client):
-    _, receipt_id = await upload(client)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as outsider:
-        await outsider.post("/claim", data={"username": "Outsider", "next": "/"})
-        response = await outsider.post(f"/r/{receipt_id}/remove")
-    assert response.status_code == 403
-    async with client.sessions() as session:
-        assert (await session.get(Receipt, receipt_id)).status == "awaiting_tokens"
-
-
-async def test_tab_totals_distinguish_assigned_from_unassigned(client):
-    tab_id, receipt_id = await upload(client)
+@pytest.mark.parametrize("paused", ["place", "remove"])
+async def test_removing_someone_while_their_token_is_placed_leaves_them_no_share(client, monkeypatch, paused):
+    """One phone taps Nina onto an item while another removes her. The two take turns: the removal
+    takes the new token too, or the tap finds her gone. A token left behind would take a share of the
+    item that the Shares list, which shows only the people still on the receipt, never shows."""
+    receipt_id = await upload(client, "Adam", "Nina")
     first, _ = await items_for(client, receipt_id)
     await op(client, receipt_id, "place", item_id=first.id, username="Adam")
-    page = await client.get(f"/t/{tab_id}")
-    assert "Receipt totals" in page.text
-    assert "13,90\u00a0€" in page.text
-    assert "6,95\u00a0€" in page.text
-    assert "not a payment or transfer balance" in page.text.lower()
-    assert "owes / gets back" not in page.text
+    place = lambda: op(client, receipt_id, "place", item_id=first.id, username="Nina")
+    remove = lambda: client.post(f"/r/{receipt_id}/people/remove", data={"username": "Nina"})
+    other = None
+
+    # Pause the first request once it has seen Nina on the receipt (the tap: about to load the item; the
+    # removal: her tokens gone, about to delete her) and start the other request meanwhile.
+    name, when = ("get", lambda entity, *_: entity is Item) if paused == "place" else \
+        ("delete", lambda obj, *_: isinstance(obj, Person))
+    original = getattr(AsyncSession, name)
+
+    async def interleaved(self, *args, **kwargs):
+        nonlocal other
+        if other is None and when(*args):
+            other = asyncio.create_task(remove() if paused == "place" else place())
+            await asyncio.wait({other}, timeout=.5)
+            assert not other.done()  # it waits for the paused request to finish
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, name, interleaved)
+    first_done = await (place() if paused == "place" else remove())
+    placed, removed = (first_done, await other) if paused == "place" else (await other, first_done)
+    assert removed.status_code == 200 and placed.status_code == (200 if paused == "place" else 404)
+    assert set(await people(client, receipt_id)) == {"Adam"}
+    items = await items_for(client, receipt_id)
+    assert {t.username for i in items for t in i.tokens} == {"Adam"}
+    assert totals(items) == {"Adam": 695}
+
+
+async def test_anyone_can_be_ticked_off_and_a_tick_lapses_only_when_their_share_moves(client):
+    receipt_id = await upload(client, "Adam", "Nina")
+    first, second = await items_for(client, receipt_id)
+    await op(client, receipt_id, "place", item_id=first.id, username="Adam")
+    ticked = await op(client, receipt_id, "confirm", username="Adam")  # before everything is assigned: fine
+    assert ticked.json() == {"type": "confirm", "username": "Adam", "status": "splitting"}
+    await op(client, receipt_id, "place", item_id=second.id, username="Nina")
+    assert (await op(client, receipt_id, "confirm", username="Nina")).json()["status"] == "settled"
+    review = await client.get(f"/r/{receipt_id}/review")
+    assert "Everyone with a share is ticked off" in review.text and "Mango tea" in review.text
+
+    await op(client, receipt_id, "place", item_id=second.id, username="Adam")  # Adam shares Nina's tea now
+    agreed = {name: p.agreed_cents for name, p in (await people(client, receipt_id)).items()}
+    assert agreed == {"Adam": 695, "Nina": 695}  # what they said yes to stays recorded
+    review = await client.get(f"/r/{receipt_id}/review")
+    assert "Was 6,95\u00a0€ when ticked. Ask again." in review.text
+    assert "0 of 2 ticked off" in review.text and "Watermelon tea (shared)" in review.text
+
+    await op(client, receipt_id, "unplace", item_id=second.id, username="Adam")  # undone: both ticks hold again
+    assert (await op(client, receipt_id, "unconfirm", username="Nina")).json()["status"] == "pending_confirm"
+    review = await client.get(f"/r/{receipt_id}/review")
+    assert "1 of 2 ticked off" in review.text and "All assigned" in (await client.get(f"/r/{receipt_id}")).text
+    assert (await op(client, receipt_id, "approve", username="Nina")).status_code == 422
+
+
+async def test_home_lists_the_splits_opened_on_this_device_only(client):
+    first = await upload(client)
+    page = await client.get("/")
+    assert f'href="/r/{first}"' in page.text and "Choose receipt photo" in page.text
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as other:
+        assert f'href="/r/{first}"' not in (await other.get("/")).text
+        await other.get(f"/r/{first}")  # opened from a shared link: now listed there too
+        assert f'href="/r/{first}"' in (await other.get("/")).text
+    second = await upload(client)
+    listed = (await client.get("/")).text
+    assert listed.index(f'href="/r/{second}"') < listed.index(f'href="/r/{first}"')  # newest first
 
 
 async def test_extra_tokens_weight_the_split_and_come_off_one_at_a_time(client):
-    tab_id, receipt_id = await upload(client)
+    receipt_id = await upload(client, "Adam", "Marek", "Nina")
     first, _ = await items_for(client, receipt_id)
-    for name in ("Marek", "Nina"):
-        await client.post(f"/t/{tab_id}/members", data={"username": name})
     for name in ["Marek"] * 5 + ["Adam", "Nina"]:  # Marek had most of the 6,95 € tea
         await op(client, receipt_id, "place", item_id=first.id, username=name)
     review = await client.get(f"/r/{receipt_id}/review")
@@ -178,7 +217,7 @@ async def test_extra_tokens_weight_the_split_and_come_off_one_at_a_time(client):
 
 
 async def test_a_token_sits_where_it_was_tapped(client):
-    _, receipt_id = await upload(client)
+    receipt_id = await upload(client)
     first, _ = await items_for(client, receipt_id)
     await op(client, receipt_id, "place", item_id=first.id, username="Adam", spot=.3)
     await op(client, receipt_id, "place", item_id=first.id, username="Adam")  # from the list: stays put
@@ -193,9 +232,7 @@ async def test_a_token_sits_where_it_was_tapped(client):
 
 
 async def test_focus_area_is_stored_and_sent_to_ocr(client):
-    tab = await client.post("/tabs", data={"name": "Dinner"})
-    tab_id = tab.url.path.rsplit("/", 1)[-1]
-    page = await client.post(f"/t/{tab_id}/receipts", files={"image": ("check.jpg", photo(), "image/jpeg")},
+    page = await client.post("/receipts", files={"image": ("check.jpg", photo(), "image/jpeg")},
                              data={"focus_x": ".1", "focus_y": ".3", "focus_w": ".8", "focus_h": ".4"})
     receipt_id = page.url.path.rsplit("/", 1)[-1]
     area, = client.focus  # the rectangle's corners
@@ -207,10 +244,8 @@ async def test_focus_area_is_stored_and_sent_to_ocr(client):
 
 
 async def test_dragged_corners_are_stored_and_bound_the_crop(client):
-    tab = await client.post("/tabs", data={"name": "Dinner"})
-    tab_id = tab.url.path.rsplit("/", 1)[-1]
     quad = [[.1, .3], [.9, .32], [.9, .7], [.1, .66]]
-    page = await client.post(f"/t/{tab_id}/receipts", files={"image": ("check.jpg", photo(), "image/jpeg")},
+    page = await client.post("/receipts", files={"image": ("check.jpg", photo(), "image/jpeg")},
                              data={"focus_x": ".1", "focus_y": ".3", "focus_w": ".8", "focus_h": ".4",
                                    "focus_quad": json.dumps(quad)})
     receipt_id = page.url.path.rsplit("/", 1)[-1]
@@ -222,7 +257,7 @@ async def test_dragged_corners_are_stored_and_bound_the_crop(client):
 
 async def test_printed_total_flags_a_missing_item(client):
     client.reader.total = 2000
-    _, receipt_id = await upload(client)
+    receipt_id = await upload(client)
     assert client.focus == [None]  # no focus drawn: whole photo
     review = await client.get(f"/r/{receipt_id}/review")
     assert "Items add up to 13,90\u00a0€" in review.text and "6,10\u00a0€ missing" in review.text
@@ -234,23 +269,23 @@ async def test_printed_total_flags_a_missing_item(client):
     assert (round(cake.x, 3), round(cake.y, 3), cake.w, cake.h) == (.25, .58, .5, .04)
 
 
-async def test_redrawing_a_box_keeps_shares_and_confirmations(client):
-    _, receipt_id = await upload(client)
+async def test_redrawing_a_box_keeps_shares_and_ticks(client):
+    receipt_id = await upload(client)
     first, second = await items_for(client, receipt_id)
     for item in (first, second):
         await op(client, receipt_id, "place", item_id=item.id, username="Adam")
-    await op(client, receipt_id, "confirm")
+    await op(client, receipt_id, "confirm", username="Adam")
     moved = await client.post(f"/r/{receipt_id}/items/{second.id}/box",
                               data={"x": ".5", "y": ".55", "w": ".6", "h": ".04"})
     assert moved.json()["type"] == "box"
     _, second_after = await items_for(client, receipt_id)
     assert (round(second_after.y, 3), second_after.h) == (.53, .04)
     async with client.sessions() as session:
-        assert len(list(await session.scalars(select(Confirmation)))) == 1
+        assert (await session.get(Receipt, receipt_id)).status == "settled"
 
 
 async def test_board_shows_the_receipt_not_the_whole_photo(client):
-    _, receipt_id = await upload(client)
+    receipt_id = await upload(client)
     async with client.sessions() as session:
         receipt = await session.get(Receipt, receipt_id)
         assert (receipt.view_x, receipt.view_w) == (.15, .7)
@@ -271,21 +306,21 @@ def test_money_is_written_the_local_way():
     assert money(103500, "CZK") == "1\u00a0035,00\u00a0Kč"
     assert money(-50) == "-0,50\u00a0€"
     assert money(1250, "GBP") == "£12,50"
-    assert money_by_currency({"CZK": 103500, "EUR": 0}) == "1\u00a0035,00\u00a0Kč"
-    assert money_by_currency({}, "CZK") == "0,00\u00a0Kč"
 
 
-async def test_currency_is_read_inherited_fixable_and_never_summed_across(client):
+async def test_currency_is_read_inherited_on_this_device_and_fixable(client):
     client.reader.currency = "CZK"
-    tab_id, first = await upload(client)
+    first = await upload(client)
     page = await client.get(f"/r/{first}")
     assert "6,95\u00a0Kč" in page.text and "Price (Kč)" in page.text and "\u00a0€" not in page.text  # no amount in euros (the picker still lists EUR)
-    client.reader.currency = None  # unread: the tab's last receipt's
-    second = (await client.post(f"/t/{tab_id}/receipts", files={"image": ("b.jpg", photo("gray"), "image/jpeg")})).url.path.rsplit("/", 1)[-1]
+    client.reader.currency = None  # unread: this device's last receipt's
+    second = (await client.post("/receipts", files={"image": ("b.jpg", photo("gray"), "image/jpeg")})).url.path.rsplit("/", 1)[-1]
     async with client.sessions() as session:
         assert (await session.get(Receipt, second)).currency == "CZK"
     page = await client.post(f"/r/{second}/currency", data={"currency": "EUR"})
     assert "6,95\u00a0€" in page.text
     assert (await client.post(f"/r/{second}/currency", data={"currency": "XYZ"})).status_code == 422
-    tab = await client.get(f"/t/{tab_id}")
-    assert "13,90\u00a0Kč + 13,90\u00a0€" in tab.text  # two currencies, two sums
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test",
+                                 follow_redirects=True) as other:  # a device with no receipts yet: euros
+        third = await other.post("/receipts", files={"image": ("c.jpg", photo("black"), "image/jpeg")})
+        assert "6,95\u00a0€" in third.text

@@ -3,15 +3,64 @@
 {% block main_class %}narrow{% endblock %}
 {% block content %}
 <section class="panel">
-  <h1>Start a tab</h1>
-  <p class="muted">Add receipt photos, then everyone taps what they had.</p>
-  {% if who %}
-  <form method="post" action="/tabs" class="stack">
-    <label>Tab name<input id="tab-name" name="name" placeholder="e.g. Brno dinner" required maxlength="64" autocomplete="off"></label>
-    <button class="large">{{ icon("plus") }}Create tab</button>
+  <h1>Split a receipt</h1>
+  <p class="muted">Photograph the bill, add who’s splitting, then tap who had what. Share the link and anyone can help.</p>
+  <form method="post" action="/receipts" enctype="multipart/form-data" data-busy="Reading the receipt…" class="upload-form" id="upload">
+    <label class="btn large upload-button">{{ icon("camera") }}<span data-busy-label>Choose receipt photo</span>
+      <input id="receipt-image" class="visually-hidden" type="file" name="image" accept="image/jpeg,image/png,image/webp" required></label>
+    {% for key in ("x", "y", "w", "h", "quad") %}<input type="hidden" name="focus_{{ key }}" disabled>{% endfor %}
+    <input type="hidden" name="rotation" value="0">
+    <noscript><button class="secondary">Upload</button></noscript>
+    <p class="muted busy-help" hidden role="status">Finding the items. This can take a while; please don’t upload it again.</p>
   </form>
-  {% else %}
-  <a class="btn large" href="/claim?next=/">Choose your name to start</a>
-  {% endif %}
 </section>
+<dialog id="focus-dialog" class="focus-dialog" aria-labelledby="focus-title">
+  <h2 id="focus-title">Where are the items?</h2>
+  <p class="muted">Drag over the item lines and their prices. Leave out the total.</p>
+  {# The viewport shows the surface zoomed and panned; the surface is the photo as turned, and the area's corners are relative to it. #}
+  <div class="focus-viewport">
+    <div class="focus-surface"><img id="focus-preview" alt="The chosen receipt photo" draggable="false">
+      <svg class="focus-shade" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true" hidden><path class="shade" fill-rule="evenodd"/><path class="edge"/></svg>
+      {% for corner in ("top left", "top right", "bottom right", "bottom left") %}<span class="focus-handle" data-corner="{{ loop.index0 }}" title="Drag the {{ corner }} corner" hidden></span>{% endfor %}
+    </div>
+    <div class="zoom-controls" role="group" aria-label="Zoom">
+      <button type="button" data-zoom="out" aria-label="Zoom out">{{ icon("minus") }}</button>
+      <button type="button" data-zoom="in" aria-label="Zoom in">{{ icon("plus") }}</button>
+      <button type="button" data-zoom="fit" aria-label="Show the whole photo">{{ icon("maximize") }}</button>
+    </div>
+  </div>
+  <div class="turn-tools">
+    <button type="button" class="secondary small" data-focus="turn">{{ icon("rotate-cw") }}Rotate</button>
+    <label class="straighten">Straighten<input type="range" id="focus-straighten" min="-20" max="20" step="0.5" value="0"><output>0°</output></label>
+  </div>
+  <div class="focus-tools"><span class="muted">Pinch to zoom. Then drag its corners to fit tilted lines.</span>
+    <button type="button" class="text-button" data-focus="reset">{{ icon("rotate") }}Start over</button></div>
+  <div class="dialog-actions">
+    <button type="button" class="text-button" data-close-dialog>Cancel</button>
+    <button type="button" class="secondary" data-focus="whole">Use whole photo</button>
+    <button type="button" data-focus="detect" disabled>Detect items</button>
+  </div>
+</dialog>
+
+{% if rows %}
+<section>
+  <div class="section-head"><h2>On this device</h2></div>
+  <ul class="receipt-list">
+  {% for row in rows %}{% set r = row.receipt %}{% set s = row.summary %}
+    <li class="receipt-card">
+      <a href="/r/{{ r.id }}" class="receipt-link">
+        <img src="/uploads/{{ r.image_path }}" alt="" loading="lazy">
+        <span class="receipt-main">
+          <span class="receipt-title">{{ r.created_at | receipt_date }}</span>
+          <span class="receipt-sub"><span class="badge {{ r.status }}">{{ r.status | status_label }}</span>
+            <span>{% if not s.item_count %}No items yet{% elif not s.complete %}{{ s.assigned_count }}/{{ s.item_count }} items assigned{% else %}{{ s.totals | length }} {{ 'person' if s.totals | length == 1 else 'people' }}{% endif %}</span></span>
+        </span>
+        <strong class="amount">{{ s.total | money(r.currency) }}</strong>
+      </a>
+    </li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+<script src="/static/focus.js?v=3" defer></script>
 {% endblock %}

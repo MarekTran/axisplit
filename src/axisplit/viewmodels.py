@@ -1,35 +1,36 @@
 """Readable, derived UI state. Amounts are consumption shares, not payment debts."""
 
-from .models import Item, Receipt
-from .split import split_item
+from .models import Item, Person, Receipt
+from .split import agreed, totals
 
 STATUS_LABELS = {
     "awaiting_items": "Needs detection",
     "awaiting_tokens": "Ready to split",
     "splitting": "Assigning items",
-    "pending_confirm": "Waiting for agreement",
+    "pending_confirm": "All assigned",
     "settled": "Everyone agreed",
-    "removed": "Removed",
 }
 
 
-def receipt_summary(items: list[Item], confirmed: set[str]) -> dict:
-    totals: dict[str, int] = {}
-    for item in items:
-        for share in split_item(item):
-            totals[share.username] = totals.get(share.username, 0) + share.cents
+def receipt_summary(items: list[Item], people: list[Person]) -> dict:
+    shares = totals(items)
     unassigned = [i for i in items if not i.tokens]
-    involved = set(totals)
+    ticked = agreed(people, shares)
+    had: dict[str, list[str]] = {}  # what to read out when asking someone: their items, receipt order
+    for item in items:
+        for token in item.tokens:
+            had.setdefault(token.username, []).append(item.label + (" (shared)" if len(item.tokens) > 1 else ""))
     return {
         "total": sum(i.price_cents for i in items),
-        "assigned": sum(totals.values()),
+        "assigned": sum(shares.values()),
         "unassigned_total": sum(i.price_cents for i in unassigned),
         "unassigned_count": len(unassigned),
         "assigned_count": len(items) - len(unassigned),
         "item_count": len(items),
-        "totals": totals,
-        "confirmed": sorted(confirmed & involved),
-        "waiting": sorted(involved - confirmed),
+        "totals": shares,
+        "had": had,
+        "agreed": ticked,
+        "waiting": sorted(set(shares) - ticked),
         "complete": bool(items) and not unassigned,
     }
 
@@ -70,9 +71,3 @@ def money(cents: int, code: str = "EUR") -> str:
     whole, part = divmod(abs(cents), 100)
     number = f"{'-' if cents < 0 else ''}{whole:,}".replace(",", "\u00a0") + f",{part:02d}"
     return f"{sign}{number}" if before else f"{number}\u00a0{sign}"
-
-
-def money_by_currency(amounts: dict[str, int], fallback: str = "EUR") -> str:
-    """A tab's receipts can be in several currencies: each sum is shown, never added together."""
-    shown = [money(cents, code) for code, cents in sorted(amounts.items()) if cents]
-    return " + ".join(shown) or money(0, fallback)

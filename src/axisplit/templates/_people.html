@@ -1,0 +1,4 @@
+{# The people bar's chips, also sent inside the review so every phone's bar follows adds and removals. #}
+{% from "_icons.html" import icon %}
+{% for p in people %}<button type="button" class="token" data-user="{{ p.username }}" style="--c: {{ p.color }}" aria-pressed="false"><span class="avatar" aria-hidden="true">{{ p.username[:1] }}</span>{{ p.username }}<span class="check" aria-hidden="true">✓</span></button>
+{% endfor %}<button type="button" class="add-token" data-add-person>{{ icon("user-plus") }}Add person</button>

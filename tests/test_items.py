@@ -2,10 +2,9 @@
 
 import pytest
 
-from axisplit.models import Confirmation
 from axisplit.ops import parse_cents
 
-from test_ux import client, items_for, op, upload  # noqa: F401  (client is a fixture)
+from test_ux import client, items_for, op, people, upload  # noqa: F401  (client is a fixture)
 
 
 @pytest.mark.parametrize("typed, cents", [
@@ -16,30 +15,31 @@ def test_prices_are_read_as_people_type_them(typed, cents):
     assert parse_cents(typed) == cents
 
 
-async def test_editing_a_price_resets_confirmations_but_a_name_does_not(client):
-    _, receipt_id = await upload(client)
+async def test_a_new_price_lapses_the_ticks_of_those_on_the_item_only(client):
+    receipt_id = await upload(client, "Adam", "Nina")
     first, second = await items_for(client, receipt_id)
-    for item in (first, second):
-        await op(client, receipt_id, "place", item_id=item.id, username="Adam")
-    await op(client, receipt_id, "confirm")
+    await op(client, receipt_id, "place", item_id=first.id, username="Adam")
+    await op(client, receipt_id, "place", item_id=second.id, username="Nina")
+    for name in ("Adam", "Nina"):
+        await op(client, receipt_id, "confirm", username=name)
 
     renamed = await client.post(f"/r/{receipt_id}/items/{first.id}", data={"label": "Mango iced tea", "price": "6,95"})
     assert renamed.json() == {"item_id": first.id, "label": "Mango iced tea", "price_cents": 695}
-    async with client.sessions() as session:
-        assert await session.get(Confirmation, (receipt_id, "Adam")) is not None
+    review = await client.get(f"/r/{receipt_id}/review")
+    assert "Everyone with a share is ticked off" in review.text
 
     await client.post(f"/r/{receipt_id}/items/{first.id}", data={"label": "Mango iced tea", "price": "5,95"})
-    async with client.sessions() as session:
-        assert await session.get(Confirmation, (receipt_id, "Adam")) is None
     review = await client.get(f"/r/{receipt_id}/review")
     assert "Mango iced tea" in review.text and "5,95" in review.text
+    assert "1 of 2 ticked off" in review.text and "Was 6,95\u00a0€ when ticked" in review.text
+    assert {n: p.agreed_cents for n, p in (await people(client, receipt_id)).items()} == {"Adam": 695, "Nina": 695}
 
     bad = await client.post(f"/r/{receipt_id}/items/{first.id}", data={"label": "Tea", "price": "free"})
     assert bad.status_code == 422
 
 
 async def test_a_deleted_item_leaves_the_split_and_undo_brings_it_back_with_its_tokens(client):
-    _, receipt_id = await upload(client)
+    receipt_id = await upload(client)
     first, second = await items_for(client, receipt_id)
     await op(client, receipt_id, "place", item_id=first.id, username="Adam")
 
@@ -58,7 +58,7 @@ async def test_a_deleted_item_leaves_the_split_and_undo_brings_it_back_with_its_
 
 
 async def test_an_added_item_comes_back_marked_so_the_page_can_offer_undo(client):
-    _, receipt_id = await upload(client)
+    receipt_id = await upload(client)
     page = await client.post(f"/r/{receipt_id}/items", data={
         "label": "Tip", "price": "1 000,00", "x": ".5", "y": ".8", "w": ".6", "h": ".04"})
     added = [i for i in await items_for(client, receipt_id) if i.label == "Tip"][0]

@@ -2,35 +2,33 @@
 
 ## 1. What it is
 
-A bill-splitting web app for groups (Splitwise/Tricount class) with one core
-differentiator: **you photograph a paper receipt, OCR extracts the line items,
-and every participant "claims" items by dropping colored tokens onto them.**
-The split is derived from who owns which token on which item — no manual
-transcription, no "who paid for what" arguments later.
+A receipt-splitting calculator with one core differentiator: **you photograph a
+paper receipt, OCR extracts the line items, and each person's colored token is
+tapped onto what they had.** The split is derived from who owns which token on
+which item — no manual transcription, no "who paid for what" arguments later.
 
-v1 scope: restaurant/shop receipts. One tab = one event.
+v1 scope: restaurant/shop receipts. One receipt = one split = one link. Usually
+one person (the one with the bill) does it all and ticks people off as they
+check their share; anyone they share the link with can help.
 
 ## 2. Domain model
 
 ```
-User            username is the ID (text PK). No passwords in v1.
-Tab             a group/event. created_by, name, invite_secret (capability token).
-TabMember       (tab, username) + assigned color. Anyone in a tab may add anyone
-                by username; usernames are claimed, not verified (see §6).
-Receipt         an uploaded image inside a tab. uploaded_by, image file, status.
+Receipt         an uploaded image, its status and currency. Its random id is the
+                link and the only key to it (see §6).
+Person          (receipt, username) + color + agreed_cents. Added by name on the
+                receipt by anyone with the link; names are unique on it.
+                agreed_cents: the share they were ticked off at (null: not ticked).
 Item            one OCR-detected line: label, price (integer cents), currency,
                 bbox (x,y,w,h normalized 0..1), ocr_confidence.
 TokenAssignment (item, username, count) — "this person had count parts of
                 this item". One row per (item, username); anyone can add
                 anyone's token any number of times. This is the entire split state.
-Confirmation    (receipt, username, confirmed_at) — user agrees with final
-                token layout & prices of a receipt.
 ```
 
-Removed receipts keep their data but are excluded from tab totals. Removal
-requires explicit confirmation; Undo restores their assignments and agreement
-state. Exact-photo duplicates reuse an existing active receipt. Existing copies
-are flagged for review, never silently discarded. See `docs/ux.md`.
+A person is ticked off while their share still equals `agreed_cents`: a change
+that moves their share unticks only them, and undoing it ticks them again. Ticks
+are optional; nothing waits for them. Removing a person drops their tokens.
 
 
 Settlement is **pure derived data**: for each item, each token holder owes
@@ -44,38 +42,37 @@ matching); v1 shows the raw per-item ledger.
 ```
 UPLOADED  → OCR_RUNNING → AWAITING_ITEMS   (items need manual fix, UI editable)
                         → AWAITING_TOKENS  (items OK, no assignments yet)
-AWAITING_TOKENS → SPLITTING (someone placing tokens)
-SPLITTING       → PENDING_CONFIRM (a member clicked Confirm)
-PENDING_CONFIRM → SETTLED (all items assigned and all token holders confirmed)
-                          → anyone moving a token bumps it back to SPLITTING
+AWAITING_TOKENS → SPLITTING       (tokens placed, some items still unassigned)
+SPLITTING       → PENDING_CONFIRM ("All assigned": every item has a token)
+PENDING_CONFIRM → SETTLED         ("Everyone agreed": everyone with a share is
+                                   ticked off at that share)
+Derived after every change, so it moves back as readily as forward.
 ```
 
 ## 3. Golden path (from the product description)
 
-1. **Adam** creates tab "Brno dinner". Tab gets `invite_secret`; link
-   `https://host/t/<tab_id>?s=<secret>`.
-2. Adam posts link to group chat. **Nina** opens it, claims username "Nina".
-   She is now a TabMember with an auto-assigned color.
-3. Adam uploads a photo of the check. OCR runs → items with bboxes appear
-   over the image: `GrillFor2 20€`, `Caesar Salad 10€`, `Nachos 5€`,
-   `Beer x2 2€`, `Cola Zero 2€`.
-4. Adam taps his own token in the member bar, taps the GrillFor2 box, taps
-   Marek's token, taps GrillFor2 again → two tokens on that box.
-5. Adam doesn't remember the rest → **leaves the room open state on the
-   server**; nobody loses anything, everyone works from the share link.
-6. Nina joins the receipt "room" (link again). She sees current tokens in
-   real time. She taps her name to *claim herself as Nina* on this device,
-   then places: Marek+Adam+Nina on Nachos, Nina on Beer, Nina on Salad,
+1. **Adam** has the bill. He uploads a photo of the check. OCR runs → items
+   with bboxes appear over the image: `GrillFor2 20€`, `Caesar Salad 10€`,
+   `Nachos 5€`, `Beer x2 2€`, `Cola Zero 2€`.
+2. He adds Adam, Marek and Nina by name in the people bar.
+3. He picks Adam, taps the GrillFor2 box, picks Marek, taps GrillFor2 again →
+   two tokens on that box.
+4. He doesn't remember the rest → **Share link** to the group chat. The
+   receipt's state lives on the server; nobody loses anything.
+5. **Nina** opens the link (no sign-in) and sees the tokens live. She picks
+   names and places: Marek+Adam+Nina on Nachos, Nina on Beer, Nina on Salad,
    Marek on Cola, Adam on Beer.
-7. Nina presses **Confirm** and pings the chat. Adam & Marek open, look,
-   press Confirm. Receipt is SETTLED and feeds the tab ledger.
+6. Adam goes round the table: each person's row lists what they had and their
+   share. He ticks them off as they agree. Receipt is SETTLED.
 
 ## 4. Realtime collaboration
 
 - One **WebSocket room per receipt**: `/ws/receipts/<id>`.
 - Clients send semantic ops: `place {item, user}`, `unplace {item, user}`,
-  `confirm {user}`, presence pings. Server validates (sender must be a tab
-  member) and broadcasts the resulting state event to all peers.
+  `confirm {user}` / `unconfirm {user}` (the tick), presence pings. Ops name
+  any person on the receipt; the server checks they are on it and broadcasts
+  the resulting state event to all peers. Adding or removing people is HTTP and
+  broadcasts `people`; peers re-read the review, which carries the people bar.
 - `place` adds one more of that person's tokens, `unplace` takes one off; the
   server applies each as a single atomic UPDATE/DELETE, so the per-person
   counters are **commutative** and concurrent taps never lose a count. No
@@ -165,7 +162,7 @@ at any distance. Overlapping candidates are ranked by distance to the box
 edge, then its center; padded boxes never steal hits inside another actual
 box. An empty receipt offers detection or manual recovery. A missing item is
 added by dragging its line on the photo; a wrong box is redrawn from the item's
-number (geometry only: shares and confirmations are unchanged). A token
+number (geometry only: shares and ticks are unchanged). A token
 can always be re-assigned, so OCR recall matters more than pixel-perfect IoU.
 
 Coordinate-space guarantee: `Item.bbox` is normalized 0..1 against the **stored,
@@ -175,12 +172,12 @@ whatever space OCR models see. Backends MUST return boxes in that space.
 
 ## 6. Auth & threat model (v1)
 
-- No accounts. A claimed username cookie per device + possession of the tab
-  invite secret = capability to read/write the tab.
-- The **shareable link is the secret** — leak = anyone can join the tab and
-  impersonate a username. Acceptable for a friend-group prototype.
-- Guardrails: invite secret never logged/rendered in URLs in listings,
-  rotate-on-demand later. Verified accounts, password auth, and per-user
+- No accounts, no names to claim. Possession of a receipt's link (its random
+  id) = full rights on it: add and remove people, assign, tick, edit items.
+- The **shareable link is the secret** — leak = anyone can change the split.
+  Acceptable for a friend-group calculator.
+- Guardrails: receipts are never listed to others; the home page lists only
+  those opened on the device (a cookie of ids). Verified accounts and per-user
   ledgers are post-v1.
 
 ## 7. Stack
@@ -190,7 +187,7 @@ whatever space OCR models see. Backends MUST return boxes in that space.
 - **Frontend:** htmx + Alpine.js (CDN), one small hand-written `receipt.js`
   for the token board + WebSocket. Mobile-first CSS. No React, no bundler
   in v1.
-- **Interaction:** tap a member token, then **tap the photo** where the item is
+- **Interaction:** tap a person's token, then **tap the photo** where the item is
   printed; client-side geometry snaps the token to the containing/nearest OCR
   box (spec §5). Tapping again adds another token (a bigger part); tap a pip
   to take one off. The item list works the same way: a row adds the selected
@@ -209,7 +206,7 @@ bench/              OCR benchmark harness + ground-truth format
 src/axisplit/       FastAPI app (SSR)
   ocr.py            local vision inference + validated grounding boxes
   models.py db.py   SQLAlchemy domain
-  routers/          tabs, receipts, ws
+  routers/          home, receipts, ws
   templates/ static/
 ```
 

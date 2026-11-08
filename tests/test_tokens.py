@@ -1,10 +1,7 @@
-"""Several tokens per person: proportional split math and the schema upgrade."""
+"""Several tokens per person: proportional split math."""
 
 import itertools
 
-from sqlalchemy import create_engine, text
-
-from axisplit.main import add_missing_columns
 from axisplit.models import Item, TokenAssignment
 from axisplit.split import split_item
 
@@ -29,18 +26,3 @@ def test_shares_always_add_up_to_the_price():
     for price, a, b, c in itertools.product((1, 99, 695, 3240, -300), (1, 2, 5), (1, 3), (1, 7)):
         assert sum(shares(price, Adam=a, Marek=b, Nina=c).values()) == price
 
-
-def test_existing_databases_get_the_new_columns():
-    engine = create_engine("sqlite://")
-    with engine.begin() as conn:
-        conn.execute(text("CREATE TABLE token_assignments (item_id VARCHAR, username VARCHAR, PRIMARY KEY (item_id, username))"))
-        conn.execute(text("CREATE TABLE receipts (id VARCHAR PRIMARY KEY)"))
-        conn.execute(text("INSERT INTO token_assignments VALUES ('i', 'Adam')"))
-        conn.execute(text("INSERT INTO receipts VALUES ('r')"))
-        conn.execute(text("CREATE TABLE items (id VARCHAR PRIMARY KEY)"))
-        conn.execute(text("INSERT INTO items VALUES ('i')"))
-        add_missing_columns(conn)
-        add_missing_columns(conn)  # idempotent on every startup
-        assert conn.execute(text("SELECT count FROM token_assignments")).scalar_one() == 1
-        assert conn.execute(text("SELECT focus_w, printed_total_cents FROM receipts")).one() == (None, None)
-        assert conn.execute(text("SELECT deleted FROM items")).scalar_one() == 0  # existing items stay

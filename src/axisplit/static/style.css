@@ -150,8 +150,6 @@ label input { margin-top: .35rem; font-weight: 400; }
 .brand-mark rect { fill: var(--accent); }
 .brand-mark path { stroke: var(--on-accent); stroke-width: 2.4; stroke-linecap: round; fill: none; }
 .brand-mark circle { fill: var(--on-accent); }
-.who { display: inline-flex; align-items: center; gap: .45rem; font-size: .9rem; font-weight: 550; color: var(--text-2); }
-.who .avatar { background: var(--accent-soft); color: var(--accent-text); text-shadow: none; }
 main { width: 100%; max-width: 760px; margin: 0 auto; padding: .5rem var(--gutter) calc(5rem + env(safe-area-inset-bottom)); }
 main.wide { max-width: 1180px; }
 main.narrow { max-width: 440px; padding-top: 1.5rem; }
@@ -160,6 +158,7 @@ main.narrow { max-width: 440px; padding-top: 1.5rem; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; margin-bottom: .75rem; }
 .page-head > div { min-width: 0; }
 .page-head p { margin: 0; }
+.head-actions { display: flex; flex-direction: column; align-items: flex-end; gap: .45rem; flex: none; }
 .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; margin: 1.75rem 0 .6rem; }
 .section-head h2 { margin: 0; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 1.1rem; margin-bottom: 1rem; }
@@ -169,20 +168,8 @@ main.narrow { max-width: 440px; padding-top: 1.5rem; }
 .avatar { display: inline-grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%;
   background: var(--c, var(--accent)); color: #fff; font-size: .76rem; font-weight: 700; line-height: 1; text-transform: uppercase;
   text-shadow: 0 1px 1px rgb(0 0 0 / .25); }
-.avatar-stack { display: inline-flex; vertical-align: middle; margin-right: .4rem; }
-.avatar-stack .avatar { width: 24px; height: 24px; margin-left: -6px; font-size: .66rem; box-shadow: 0 0 0 2px var(--bg); }
-.avatar-stack .avatar:first-child { margin-left: 0; }
-.you-tag { margin-left: .4rem; padding: .05rem .4rem; border-radius: 99px; background: var(--accent-soft); color: var(--accent-text);
-  font-size: .66rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; vertical-align: .1em; }
 .dot { display: inline-block; width: .65em; height: .65em; border-radius: 50%; background: var(--c); margin-right: .4em; flex-shrink: 0; }
-.chips { list-style: none; padding: 0; margin: 0 0 1rem; display: flex; flex-wrap: wrap; gap: .4rem; }
-.chips li { display: inline-flex; align-items: center; gap: .45rem; padding: .2rem .75rem .2rem .2rem; border-radius: 999px; background: var(--surface-2); font-size: .9rem; font-weight: 550; }
-.chips .avatar { width: 26px; height: 26px; font-size: .7rem; }
-.chips .you-tag { margin-left: 0; }
 .person { display: flex; align-items: center; gap: .6rem; min-width: 0; flex: 1 1 auto; font-weight: 550; }
-.share-control input { font-family: var(--mono); font-size: 13px; }
-.share-control small { display: block; margin-top: .4rem; }
-#people form { margin-top: 1rem; }
 
 /* ---------- Notices & status ---------- */
 .notice { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .6rem 1rem; padding: .8rem .9rem;
@@ -201,18 +188,10 @@ main.narrow { max-width: 440px; padding-top: 1.5rem; }
   background: var(--surface-3); color: var(--text-2); font-size: .74rem; font-weight: 650; white-space: nowrap; }
 .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .badge.settled { color: var(--success); background: var(--success-soft); }
-.badge.pending_confirm { color: var(--warn); background: var(--warn-soft); }
+.badge.pending_confirm { color: var(--success); background: var(--success-soft); }
 .badge.awaiting_tokens, .badge.splitting { color: var(--info); background: var(--info-soft); }
 
-/* ---------- Tab ---------- */
-.totals { display: flex; gap: .5rem; margin-bottom: 1rem; }
-.totals > div { flex: 1; display: flex; flex-direction: column; padding: .75rem .9rem; border-radius: var(--r); background: var(--surface); border: 1px solid var(--border); }
-.totals span { color: var(--text-2); font-size: .8rem; font-weight: 550; }
-.totals strong { font-size: 1.3rem; letter-spacing: -.02em; }
-.totals .attention { background: var(--warn-soft); border-color: var(--warn-line); }
-.totals .attention strong { color: var(--warn); }
-.totals .done strong { color: var(--success); }
-
+/* ---------- Home ---------- */
 .upload-form { margin-bottom: .5rem; }
 .upload-button { position: relative; cursor: pointer; }
 .upload-button:focus-within { outline: 2px solid var(--ring); outline-offset: 2px; }
@@ -220,16 +199,11 @@ main.narrow { max-width: 440px; padding-top: 1.5rem; }
 
 .receipt-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; margin: 0; padding: 0; list-style: none; }
 .receipt-card { display: flex; align-items: center; gap: .25rem; padding-right: .15rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
-.receipt-card.duplicate-card { flex-wrap: wrap; border-color: var(--warn-line); }
 .receipt-link { flex: 1; min-width: 0; display: flex; align-items: center; gap: .75rem; padding: .6rem; color: inherit; text-decoration: none; }
 .receipt-link img { flex: none; width: 44px; height: 56px; object-fit: cover; border-radius: 7px; background: var(--surface-3); }
 .receipt-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .2rem; }
 .receipt-title { font-weight: 600; font-size: .95rem; }
-.receipt-title small { color: var(--text-2); font-weight: 400; font-size: .82rem; }
 .receipt-sub { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .5rem; color: var(--text-2); font-size: .8rem; }
-.duplicate-hint { flex-basis: 100%; margin: 0 .6rem .6rem; padding: .5rem .7rem; border-radius: 9px; background: var(--warn-soft); font-size: .82rem; }
-.duplicate-hint strong { color: var(--warn); }
-.empty-state { padding: 1.5rem 1rem; text-align: center; color: var(--text-2); border: 1.5px dashed var(--border-strong); border-radius: var(--r-lg); font-size: .9rem; }
 
 .share-list { margin: 0; padding: 0; list-style: none; }
 .share-list li { display: flex; align-items: center; gap: .75rem; padding: .6rem 0; border-bottom: 1px solid var(--border); font-size: .94rem; }
@@ -290,9 +264,15 @@ dialog p { font-size: .93rem; }
 .tokenbar .token { --btn-bg: var(--surface); --btn-hover: var(--surface-2); --btn-fg: var(--text); --btn-border: var(--border-strong);
   flex: none; gap: .45rem; padding: .25rem .85rem .25rem .25rem; border-radius: 999px; font-size: .9rem; white-space: nowrap; }
 .tokenbar .token .avatar { width: 34px; height: 34px; font-size: .82rem; }
-.tokenbar .token small { margin-left: -.3rem; color: var(--text-2); font-size: .8rem; font-weight: 450; }
 .tokenbar .token.selected { --btn-bg: color-mix(in srgb, var(--c) 16%, var(--surface)); --btn-hover: var(--btn-bg); --btn-border: var(--c);
   box-shadow: 0 0 0 2px var(--c); }
+/* Adding people: a chip at the end of the bar opens a name field under it, kept open for the next name. */
+.tokenbar .add-token { --btn-bg: transparent; --btn-hover: var(--surface-2); --btn-fg: var(--accent-text); --btn-border: var(--border-strong);
+  flex: none; gap: .4rem; min-height: 42px; padding: .25rem .9rem; border-style: dashed; border-radius: 999px; font-size: .9rem; white-space: nowrap; }
+.token-toolbar:has(#add-person:not([hidden])) .add-token { display: none; }  /* the open field is the way to add */
+.add-person { display: flex; align-items: center; gap: .4rem; margin-top: .4rem; }
+.add-person input { flex: 1; min-width: 0; margin: 0; }
+.add-person button { flex: none; }
 .check { opacity: 0; font-size: .85em; }
 .selected .check { opacity: 1; }
 .toolbar-status { display: flex; justify-content: space-between; align-items: center; gap: .75rem; margin-top: .3rem; font-size: .84rem; }
@@ -398,11 +378,21 @@ li.unassigned .item-jump { --btn-bg: var(--box-open); --btn-fg: var(--box-open-i
 .holder .count { color: var(--text-2); font-weight: 750; font-variant-numeric: tabular-nums; }
 .holder::after { content: "−"; margin-left: .15rem; color: var(--text-3); font-weight: 600; }
 .unassigned-label { color: var(--warn); font-weight: 600; font-size: .82rem; }
-.confirmations .person > div { min-width: 0; }
-.confirmation-state { display: block; color: var(--text-2); font-size: .78rem; font-weight: 400; }
-.confirmation-state.agreed { color: var(--success); font-weight: 650; }
-.confirmation-action { margin-top: .75rem; }
-.confirmation-action > p { margin: .6rem 0 0; }
+/* Ticking people off: a checklist, one tap per person, with what to read out to them. */
+.tick-help { margin: -.25rem 0 .5rem; font-size: .84rem; }
+.share-list.ticks { padding: 0 .75rem; }
+.ticks li { gap: .6rem; }
+.ticks .person { align-items: flex-start; }
+.ticks .person > div { min-width: 0; }
+.ticks .had, .ticks .lapsed { display: block; color: var(--text-2); font-size: .8rem; font-weight: 400; overflow-wrap: anywhere; }
+.ticks .lapsed { color: var(--warn); font-weight: 600; }
+button.tick { --btn-bg: var(--surface); --btn-hover: var(--surface-2); --btn-fg: transparent; --btn-border: var(--border-strong);
+  flex: none; width: 44px; min-height: 44px; padding: 0; border-radius: 12px; }
+button.tick[aria-pressed=true] { --btn-bg: var(--success); --btn-hover: var(--success); --btn-fg: #fff; --btn-border: var(--success); }
+button.tick:hover .icon { color: var(--text-3); }
+button.tick[aria-pressed=true]:hover .icon { color: #fff; }
+.ticks .remove-person { flex: none; margin-right: -.6rem; }
+#ticked { margin: .6rem 0 0; }
 
 .feedback-toast { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 80; display: flex; align-items: center; gap: .75rem;
   width: max-content; max-width: calc(100% - 2rem); padding: .45rem .45rem .45rem .95rem; transform: translateX(-50%);

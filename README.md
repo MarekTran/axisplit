@@ -1,9 +1,10 @@
 # axisplit
 
-Splitwise/Tricount for group receipts with receipt-OCR at the core: photograph a
-check, OCR detects line items as bounding boxes, and each person "claims" items
-by dropping their colored token onto them. The split is derived from tokens;
-everyone confirms over a shareable link.
+A receipt-splitting calculator with receipt-OCR at the core: photograph a
+check, OCR detects line items as bounding boxes, add who's splitting, and tap
+each person's colored token onto what they had. The split is derived from the
+tokens. No accounts: the receipt's link is the key, and anyone with it can add
+people, assign items and tick people off once they've checked their share.
 
 Read [`docs/spec.md`](docs/spec.md) for the domain model, flows, realtime
 design, OCR plan, and stack decisions. [`docs/ux.md`](docs/ux.md) describes the
@@ -40,8 +41,8 @@ axisplit-decide --device Vulkan1   # pick a GPU (llama-server --list-devices); -
 
 Open http://localhost:8000 — upload a receipt, mark the item lines, and
 detection runs automatically. The first upload downloads the OCR models (31 MB).
-Names, line-total prices and boxes are saved together; then place tokens and
-confirm. Existing receipts with no items have a **Detect items automatically**
+Names, line-total prices and boxes are saved together; then add people, place
+tokens and, optionally, tick each person off. Existing receipts with no items have a **Detect items automatically**
 button; no re-upload required. Failed OCR is shown explicitly and can be
 retried, never silently treated as successful. If the decision model isn't
 running, the total comes from the rules alone (right on 11 of 19 unseen receipts,
@@ -71,9 +72,11 @@ A reader of your own can run as a separate service: `AXISPLIT_OCR_BACKEND=http` 
 `scripts/reader_service.py` serves the built-in reader that way as a template. Score a
 reader on the labelled receipts with `python -m bench.reader` before relying on it.
 
-The tab page provides a shareable invite link for collaboration on your LAN.
+Each receipt's **Share link** button shares its URL; whoever opens it can help
+split, live. The home page lists the receipts opened on that device.
 
-Dev DB is SQLite under `./data/`. Postgres (still inside `nix develop`):
+Dev DB is SQLite under `./data/` (`splits.db`; an `axisplit.db` from the earlier
+tab version is left as it is, not converted; recreate a Postgres database from it). Postgres (still inside `nix develop`):
 
 ```bash
 nix build .#postgres-init && ./result/bin/pg-dev   # starts local server on :5433
@@ -85,6 +88,8 @@ Regression tests (both modes verified):
 
 ```bash
 uv run pytest -q tests/test_ocr.py tests/test_ux.py    # OCR, safe recovery, constraints
+AXISPLIT_TEST_DATABASE_URL='postgresql+asyncpg://'$USER'@localhost:5433/axisplit_test' \
+  uv run pytest -q tests/test_ux.py   # the same on Postgres; that database is emptied
 nix shell --inputs-from . nixpkgs#nodejs -c node --test tests/hit-test.test.cjs
 nix shell --inputs-from . nixpkgs#geckodriver -c \
   uv run --with selenium python scripts/ux_browser.py   # isolated browser tests
