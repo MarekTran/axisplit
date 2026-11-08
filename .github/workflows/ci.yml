@@ -1,0 +1,42 @@
+# On every pull request and on main: the tests as a contributor runs them (README), and the
+# Nix build that self-hosting uses.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag
+        with:
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - run: uv run --locked pytest -q
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: node --test tests/hit-test.test.cjs
+
+  nix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check
+      # The app as `nix run`, NixOS and the Docker image run it. The decision model's package is
+      # evaluated above; building it would fetch its 1.1 GB of weights on every run.
+      - run: nix build --no-link -L .#serve
