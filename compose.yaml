@@ -1,12 +1,13 @@
 # The app reads receipts on the CPU, and a small decision model, also on the CPU, picks each
-# receipt's total. See "Self-hosting" in the README.
-#   docker compose up -d          both
+# receipt's total. See the README.
+#   docker compose up -d          both, from the images CI publishes from main
+#   docker compose up -d --build  both, built from this source
 #   docker compose up -d app      the app alone, with AXISPLIT_DECIDE_URL set to a server of
 #                                 your own (on a GPU, say), or to none for the rules alone
 services:
   app:
     build: {context: ., target: app}
-    image: axisplit
+    image: ghcr.io/marektran/axisplit:latest
     ports: ["${AXISPLIT_PORT:-8000}:8000"]
     volumes: [data:/data]
     environment:
@@ -18,7 +19,7 @@ services:
 
   decide:
     build: {context: ., target: decide}
-    image: axisplit-decide
+    image: ghcr.io/marektran/axisplit-decide:latest
     environment:
       AXISPLIT_DECIDE_THREADS: ${AXISPLIT_DECIDE_THREADS:-}  # empty: one per CPU it sees
     restart: unless-stopped
