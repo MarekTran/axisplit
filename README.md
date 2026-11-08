@@ -11,12 +11,14 @@ It runs on your own machine, on the CPU. No cloud service, no GPU needed.
 
 ## Run it
 
-**Docker.** This builds both images from source; the first build takes a few minutes.
+**Docker.** CI publishes the images from main, for x86_64:
 
 ```bash
-git clone https://github.com/MarekTran/axisplit && cd axisplit
+curl -fsSLO https://raw.githubusercontent.com/MarekTran/axisplit/main/compose.yaml
 docker compose up -d                  # http://localhost:8000
 ```
+
+To build the images from source instead, clone the repository and run `docker compose up -d --build`.
 
 **Nix**, with flakes enabled:
 
@@ -38,7 +40,7 @@ services.axisplit.enable = true;      # http://127.0.0.1:8000
 - **Data:** an SQLite database and the photos.
   - **Where:** in `~/.local/share/axisplit` with `nix run`, in `/var/lib/axisplit` on NixOS, and in the `data` volume with Docker.
   - **Backups:** back up that location.
-- **Updating:** `git pull && docker compose up -d --build`, or `nix run --refresh github:MarekTran/axisplit`.
+- **Updating:** `docker compose pull && docker compose up -d`, or `nix run --refresh github:MarekTran/axisplit`.
 
 ## Where the totals come from
 
