@@ -1,28 +1,16 @@
-# OCR benchmarks
+# Benchmarks: method and results
 
-The measurements behind the OCR pipeline in [spec §5](spec.md#5-ocr-pipeline). For how to
-run the scorer and the ground-truth format, see [`bench/README.md`](../bench/README.md).
+How the results in the [README](../README.md#how-well-it-works) were measured, and every run
+behind them. To run the scorer yourself, and for the ground-truth format, see
+[`bench/README.md`](../bench/README.md).
 
-All runs are from 2026-11-05:
+## Method
+
+The runs are from 2026-11-05 to 2026-11-07:
 - **CPU work:** a Ryzen 7 7800X3D (8 cores, 16 threads).
-- **Models:** one Radeon RX 9070 XT (16 GB), through llama.cpp's Vulkan backend from the flake.
+- **Models:** one Radeon RX 9070 XT (16 GB), through llama.cpp's Vulkan backend from the flake, except where a table says CPU.
 
-## Summary
-
-- **Items: PP-OCRv6 small plus `receipt_rules`, on the focus area.**
-  - Of everything tested on unseen receipts, it had the most exact prices and boxes.
-  - It runs on the CPU in a fraction of a second.
-- **Total: vllm-d3-nano picks it from the OCR's amount lines.** This goes through `/v1/systemone`, as text only.
-  - On unseen receipts it got 17/19 totals right, against 11/19 for the rules alone.
-  - It takes 0.10 s. Bigger decision models tied with it.
-- **Vision models (Qwen3-VL):**
-  - They read the total better: 18/19.
-  - They got far fewer prices and boxes right, at 7–10 s per receipt.
-  - They remain available as `AXISPLIT_OCR_BACKEND=vision`.
-- **What to trust: the add-up check, not model confidence.** When the items added up to the picked total, the whole receipt was right on 23 of 24 receipts, including all 10 held out.
-- **Open: the detector's input size.** The shipped 1280 px cap costs prices on the public photos; see [Detector input size](#detector-input-size).
-
-## Data
+### Data
 
 | set | receipts | items | where | used for |
 |---|---|---|---|---|
@@ -36,7 +24,7 @@ All runs are from 2026-11-05:
 - **Box scores favour OCR on the private set.** Its labelling tool pre-filled the OCR's text lines, so the ground-truth quads come from the same detector.
 - **The held-out half is now spent.** Its failures have been looked at, so the next round of rule changes needs fresh receipts to test against.
 
-## Columns
+### Columns
 
 - **items_found:** ground-truth items matched by name, ignoring a quantity prefix and accents, or by the same price with the prediction's centre on the item's line.
 - **price_right:** matched, with the exact price.
@@ -52,6 +40,21 @@ All runs are from 2026-11-05:
 Modes:
 - **whole:** items read from the whole photo.
 - **focus:** items read from the area a user would drag, taken as the ground-truth items' extent plus 1%.
+
+## Summary
+
+- **Items: PP-OCRv6 small plus `receipt_rules`, on the focus area.**
+  - Of everything tested on unseen receipts, it had the most exact prices and boxes.
+  - It runs on the CPU in a fraction of a second.
+- **Total: a small decision model picks it from the OCR's amount lines.** This goes through `/v1/systemone`, as text only.
+  - On unseen receipts vllm-d3-nano and vllm-d3-lite got 17/19 totals right, against 11/19 for the rules alone. Bigger decision models tied with them.
+  - The app bundles lite, on the CPU: 2.3 s per upload in all, on 8 cores ([On the CPU, end to end](#on-the-cpu-end-to-end)). On a GPU, nano takes 0.10 s.
+- **Vision models (Qwen3-VL):**
+  - They read the total better: 18/19.
+  - They got far fewer prices and boxes right, at 7–10 s per receipt.
+  - They remain available as `AXISPLIT_OCR_BACKEND=vision`.
+- **What to trust: the add-up check, not model confidence.** When the items added up to the picked total, the whole receipt was right on 23 of 24 receipts, including all 10 held out.
+- **Open: the detector's input size.** The shipped 1280 px cap costs prices on the public photos; see [Detector input size](#detector-input-size).
 
 ## Vision models, public set
 
@@ -156,6 +159,8 @@ The detector was capped at 1280 px, as in the app. The OCR rows' totals are the 
 | Qwen3-VL-4B | focus | 231/244 | 175/244 | 174/244 | 20 | 8/19 | 18/19 | 0 |
 | Qwen3-VL-8B | whole | 238/244 | 176/244 | 108/244 | 9 | 9/19 | 18/19 | 0 |
 | Qwen3-VL-8B | focus | 145/244 | 105/244 | 94/244 | 8 | 8/19 | 18/19 | 5 |
+
+Today's rules, which have changed since this half was scored, get 225/244 items found and 224/244 prices right on it (focus, `bench.reader`, 2026-11-07). Its failures had been looked at by then, so that isn't an unseen score.
 
 **Tune half (19 receipts, 346 items):**
 

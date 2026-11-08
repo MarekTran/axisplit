@@ -1,115 +1,108 @@
 # axisplit
 
-A receipt-splitting calculator with receipt-OCR at the core: photograph a
-check, OCR detects line items as bounding boxes, add who's splitting, and tap
-each person's colored token onto what they had. The split is derived from the
-tokens. No accounts: the receipt's link is the key, and anyone with it can add
-people, assign items and tick people off once they've checked their share.
+Split a restaurant bill from a photo of the receipt. axisplit reads the items and prices off the
+photo, you add who was there, and each person's colored token goes on what they had. The shares
+follow from the tokens, and the review shows whether the items add up to the printed total.
 
-Read [`docs/spec.md`](docs/spec.md) for the domain model, flows, realtime
-design, OCR plan, and stack decisions. [`docs/ux.md`](docs/ux.md) describes the
-interaction design, duplicate recovery and accessibility decisions.
+There are no accounts: a receipt's link is its key. Anyone with the link can add people, assign
+items and tick people off, live on every phone that has it open.
 
-## Status
+It runs on your own machine, on the CPU. No cloud service, no GPU needed.
 
-SSR FastAPI + Jinja app with automatic local OCR on upload, all on the CPU:
-PaddleOCR (PP-OCRv6) reads the text lines, rules turn them into item names,
-line-total prices and boxes, and a small decision model (vllm-d3-lite in
-llama.cpp) picks which line is the receipt's total. An upload takes about 2.3 s
-on an 8-core CPU, 0.8 s of it reading the photo ([Self-hosting](#self-hosting)). The
-review shows whether the items add up to that total. Predictions need checking:
-the add-up check catches a missed line or misread price, not every mistake.
+## Run it
 
-## Dev quickstart (NixOS or any Nix flake machine)
-
-Everything runs inside the pinned flake dev shell — do **not** use your ambient
-Python (the flake pins python312 + postgres; `uv sync` inside it builds the venv
-from the lockfile):
+**Docker.** This builds both images from source; the first build takes a few minutes.
 
 ```bash
-direnv allow            # auto-enter shell, or manually: nix develop
-uv sync --all-extras    # deps into .venv
-uv run uvicorn axisplit.main:app --reload --host 0.0.0.0 --port 8000
+git clone https://github.com/MarekTran/axisplit && cd axisplit
+docker compose up -d                  # http://localhost:8000
 ```
 
-In a **second terminal**, start the decision model for totals:
+**Nix**, with flakes enabled:
 
 ```bash
-nix run .#decide-server                                  # on the CPU; the first run fetches it (1.1 GB)
-AXISPLIT_DECIDE_DEVICE=Vulkan1 nix run .#decide-server   # or on a GPU (llama-server --list-devices)
+nix run github:MarekTran/axisplit     # http://127.0.0.1:8000
 ```
 
-Open http://localhost:8000 — upload a receipt, mark the item lines, and
-detection runs automatically. The first upload downloads the OCR models (31 MB).
-Names, line-total prices and boxes are saved together; then add people, place
-tokens and, optionally, tick each person off. Existing receipts with no items have a **Detect items automatically**
-button; no re-upload required. Failed OCR is shown explicitly and can be
-retried, never silently treated as successful. If the decision model isn't
-running, the total comes from the rules alone (right on 11 of 19 unseen receipts,
-against 17 of 19 with vllm-d3-lite) and the app logs a warning.
+**NixOS**, with this flake as an input:
 
-`AXISPLIT_DECIDE_URL` overrides the default `http://127.0.0.1:8082/v1`; any server
-with the System One API (`/v1/systemone`) works, and `none` takes the rules alone.
-
-The previous pipeline, a vision model that reads items, boxes and the total from
-the photo (Qwen3-VL-4B, about 8 s per receipt on a GPU), is still available:
-
-```bash
-axisplit-ocr                                          # vision server on :8081, ~3 GB download
-AXISPLIT_OCR_BACKEND=vision uv run uvicorn axisplit.main:app --reload
-AXISPLIT_OCR_HF=ggml-org/GLM-OCR-GGUF axisplit-ocr    # GLM-OCR experiments
+```nix
+imports = [ axisplit.nixosModules.default ];
+services.axisplit.enable = true;      # http://127.0.0.1:8000
+# services.axisplit = { host = "0.0.0.0"; openFirewall = true; };
 ```
 
-GLM's documented layout pipeline uses a separate detector; the vision backend's
-prompt requests grounding boxes directly and is tested with Qwen, not GLM.
-Mistral OCR is a hosted service, not a downloadable llama.cpp model. InternVL
-and Gemma are alternatives to benchmark, not drop-in guarantees of accurate boxes.
-`AXISPLIT_OCR_URL` overrides the vision server's default `http://127.0.0.1:8081/v1`.
+- **Requirements:** about 2.5 GB of RAM: 0.8 GB for the app, and 1.6 GB for the model that picks each receipt's total. Tested on x86_64 Linux.
+- **Before exposing it:** there is no login, so anyone who can reach it can upload receipts. Put it behind a reverse proxy with TLS, and on the internet, behind authentication too.
+  - **Reach:** `nix run` and NixOS listen on 127.0.0.1 only. Docker Compose publishes port 8000 on every address of the host.
+- **Data:** an SQLite database and the photos.
+  - **Where:** in `~/.local/share/axisplit` with `nix run`, in `/var/lib/axisplit` on NixOS, and in the `data` volume with Docker.
+  - **Backups:** back up that location.
+- **Updating:** `git pull && docker compose up -d --build`, or `nix run --refresh github:MarekTran/axisplit`.
 
-A reader of your own can run as a separate service: `AXISPLIT_OCR_BACKEND=http` with
-`AXISPLIT_READER_URL`. The API is in [`docs/reader-api.md`](docs/reader-api.md), and
-`scripts/reader_service.py` serves the built-in reader that way as a template. Score a
-reader on the labelled receipts with `python -m bench.reader` before relying on it.
+## Where the totals come from
 
-Each receipt's **Share link** button shares its URL; whoever opens it can help
-split, live. The home page lists the receipts opened on that device.
-
-Dev DB is SQLite under `./data/` (`splits.db`; an `axisplit.db` from the earlier
-tab version is left as it is, not converted; recreate a Postgres database from it). Postgres (still inside `nix develop`):
-
-```bash
-nix build .#postgres-init && ./result/bin/pg-dev   # starts local server on :5433
-DATABASE_URL='postgresql+asyncpg://'$USER'@localhost:5433/axisplit' \
-  uv run uvicorn axisplit.main:app --reload
-```
-
-Regression tests (both modes verified):
-
-```bash
-uv run pytest -q tests/test_ocr.py tests/test_ux.py    # OCR, safe recovery, constraints
-AXISPLIT_TEST_DATABASE_URL='postgresql+asyncpg://'$USER'@localhost:5433/axisplit_test' \
-  uv run pytest -q tests/test_ux.py   # the same on Postgres; that database is emptied
-nix shell --inputs-from . nixpkgs#nodejs -c node --test tests/hit-test.test.cjs
-nix shell --inputs-from . nixpkgs#geckodriver -c \
-  uv run --with selenium python scripts/ux_browser.py   # isolated browser tests
-# UI-only tests must explicitly opt out of real inference:
-AXISPLIT_OCR_BACKEND=stub bash scripts/smoke.sh
-AXISPLIT_OCR_BACKEND=stub uv run python scripts/ws_smoke.py
-```
-
-## Self-hosting
-
-The app reads receipts on the CPU, and a small decision model, also on the CPU, picks
-each receipt's total. Without it, totals come from rules: right on 11 of 19 unseen
-receipts, against 17 with it. Where the totals come from is the one choice:
+OCR (PP-OCRv6) reads the text, and rules turn it into items and prices. A small language model,
+vllm-d3-lite (1.1 GB, in llama.cpp), picks which line is the total. It runs on the CPU, next to
+the app. You can point the app at a server of your own instead, such as one on a GPU, or leave the
+model out and let the rules pick:
 
 | Totals from | Nix | Docker |
 |---|---|---|
 | the model, next to the app | `nix run github:MarekTran/axisplit` | `docker compose up -d` |
-| a server of your own (a GPU) | `AXISPLIT_DECIDE_URL=http://gpu-box:8082/v1 nix run …` | `AXISPLIT_DECIDE_URL=… docker compose up -d app` |
+| a server of your own | `AXISPLIT_DECIDE_URL=http://gpu-box:8082/v1 nix run …` | `AXISPLIT_DECIDE_URL=… docker compose up -d app` |
 | the rules alone | `AXISPLIT_DECIDE_URL=none nix run …` | `AXISPLIT_DECIDE_URL=none docker compose up -d app` |
 
-Per upload, from the photo to the review page, on 46 labelled receipts (Ryzen 7 7800X3D):
+On NixOS, `services.axisplit.decide.enable = false` gives the rules alone. To use a server of
+your own, also set `environment.AXISPLIT_DECIDE_URL`.
+
+A server of your own needs llama.cpp's `/v1/systemone` API. llama.cpp has it (b11960 is
+tested), and so does a vLLM [nightly](https://recipes.vllm.ai/vllm-sr/d3-nano). On a GPU,
+vllm-d3-nano is a little more accurate than lite (see [below](#how-well-it-works)):
+
+```bash
+llama-server -hf ggml-org/vllm-d3-nano-GGUF:Q8_0 --no-mmproj --ctx-size 8192 \
+  -b 8192 -ub 8192 --parallel 1 --cache-ram 0 --host 0.0.0.0 --port 8082
+vllm serve vllm-sr/d3-nano --api-key "$KEY"   # also set AXISPLIT_DECIDE_MODEL and AXISPLIT_DECIDE_KEY
+```
+
+## Settings
+
+Environment variables. Docker Compose reads them from the shell or from a `.env` file next to
+`compose.yaml`.
+
+| Variable | Default | |
+|---|---|---|
+| `AXISPLIT_HOST`, `AXISPLIT_PORT` | `127.0.0.1`, `8000` | where the app listens |
+| `AXISPLIT_DATA` | see [Run it](#run-it) | database and photos |
+| `DATABASE_URL` | SQLite in `AXISPLIT_DATA` | or `postgresql+asyncpg://…` |
+| `AXISPLIT_DECIDE_URL` | the model next to the app | a server with `/v1/systemone`, or `none` |
+| `AXISPLIT_DECIDE_MODEL`, `AXISPLIT_DECIDE_KEY` | | model name and API key, for vLLM |
+| `AXISPLIT_DECIDE_TIMEOUT` | `15` | seconds; past it, an upload takes the rules' total |
+| `AXISPLIT_DECIDE_THREADS` | one per CPU it may use | the model's threads; set it under a container `--cpus` limit |
+| `AXISPLIT_DECIDE_PORT` | `8082` | the bundled model's port |
+| `AXISPLIT_DECIDE_DEVICE` | `none` | a GPU for the bundled model (`nix run`), such as `Vulkan0` |
+
+## How well it works
+
+These are measured on 38 of the maintainer's own receipts. The rules were tuned on 19 of them,
+then scored once on the other 19. The machine is an 8-core Ryzen 7 7800X3D. The method and every
+result are in [`docs/benchmarks.md`](docs/benchmarks.md).
+
+On the 19 held-out receipts, with the item lines marked as on upload, it found 220 of 244 items,
+219 of them with the exact price. That's from scoring them once, before looking at its mistakes;
+today's code gets 224 exact prices on them. Totals right:
+
+| Totals from | Held-out receipts | Receipts used for tuning |
+|---|---|---|
+| vllm-d3-lite (bundled) | 17 of 19 | 15 of 19 |
+| vllm-d3-nano | 17 of 19 | 17 of 19 |
+| the rules alone | 11 of 19 | 17 of 19 |
+
+- **Vision models:** reading the photo with one (Qwen3-VL) got 18 of 19 totals right, but far fewer prices, at 7–10 s per receipt on a GPU.
+- **A wrong total isn't silent:** the review then shows that the items don't add up.
+
+Time per upload, from the photo to the review page:
 
 | CPUs | Totals from | Median | Slowest | Slowest of two at once |
 |---|---|---|---|---|
@@ -118,64 +111,45 @@ Per upload, from the photo to the review page, on 46 labelled receipts (Ryzen 7 
 | 4 of them | the model | 4.6 s | 9.0 s | 12.5 s |
 | 4 of them | the rules alone | 1.7 s | 3.1 s | 4.4 s |
 
-RAM: the app takes up to 0.8 GB and the model 1.6 GB. The model loads in under 2 s.
+## Development
 
-Nix builds the app from `uv.lock` with [uv2nix](https://github.com/pyproject-nix/uv2nix),
-OCR models included. The decision model is vllm-d3-lite in llama.cpp, from the binary
-cache; its weights (1.1 GB) are pinned by hash. The Docker images are built by Nix
-too and hold only runtime closures: `axisplit` the app's, `axisplit-decide` the model's.
-
-| Variable | Default | |
-|---|---|---|
-| `AXISPLIT_DATA` | `~/.local/share/axisplit`, `/data` in Docker | database and photos |
-| `AXISPLIT_HOST`, `AXISPLIT_PORT` | `127.0.0.1`, `8000` | where the app listens |
-| `DATABASE_URL` | SQLite in `AXISPLIT_DATA` | or `postgresql+asyncpg://…` |
-| `AXISPLIT_DECIDE_URL` | the model next to the app | any server with `/v1/systemone`, or `none` |
-| `AXISPLIT_DECIDE_MODEL`, `AXISPLIT_DECIDE_KEY` | | model name and API key, for vLLM |
-| `AXISPLIT_DECIDE_TIMEOUT` | `15` | seconds; past it, an upload takes the rules' total |
-| `AXISPLIT_DECIDE_THREADS` | one per CPU it may use | the model's threads; set it under a container `--cpus` limit |
-| `AXISPLIT_DECIDE_PORT`, `AXISPLIT_DECIDE_DEVICE` | `8082`, `none` | the model's port, and a GPU for it (Nix) |
-
-Docker Compose reads these from the shell or a `.env` file. The model listens on
-loopback only, or on Compose's own network.
-
-A server of your own needs `/v1/systemone`: llama.cpp has it (b11960 is tested), and so
-does a vLLM [nightly](https://recipes.vllm.ai/vllm-sr/d3-nano). vllm-d3-nano gets 2 more
-totals right than lite on the 38 labelled receipts, and is quick on a GPU:
+Everything runs in the flake's dev shell:
 
 ```bash
-AXISPLIT_DECIDE_DEVICE=Vulkan0 AXISPLIT_DECIDE_HOST=0.0.0.0 \
-  nix run github:MarekTran/axisplit#decide-server                             # lite
-llama-server -hf ggml-org/vllm-d3-nano-GGUF:Q8_0 --no-mmproj --ctx-size 8192 \
-  -b 8192 -ub 8192 --parallel 1 --cache-ram 0 --host 0.0.0.0 --port 8082      # any llama.cpp build
-vllm serve vllm-sr/d3-nano --api-key "$KEY"                                    # then also set
-#   AXISPLIT_DECIDE_MODEL=vllm-sr/d3-nano AXISPLIT_DECIDE_KEY="$KEY"
+nix develop                           # or: direnv allow
+uv sync --all-extras
+uv run uvicorn axisplit.main:app --reload --host 0.0.0.0 --port 8000
+nix run .#decide-server               # the total-picking model, in a second terminal
 ```
 
-On NixOS, with the flake as an input:
+To run the model on a GPU instead, set `AXISPLIT_DECIDE_DEVICE` (for example, `Vulkan0`;
+`llama-server --list-devices` lists them).
 
-```nix
-imports = [ axisplit.nixosModules.default ];
-services.axisplit = {
-  enable = true;   # http://127.0.0.1:8000, data in /var/lib/axisplit, the model on the CPU
-  # host = "0.0.0.0"; openFirewall = true;
-  # Totals from a server of your own instead, its key in a file outside the Nix store
-  # (decide.enable = false alone: the rules):
-  # decide.enable = false;
-  # environment.AXISPLIT_DECIDE_URL = "http://gpu-box:8082/v1";
-  # environmentFile = "/run/secrets/axisplit";
-};
-```
-
-## OCR benchmark
+Tests (CI runs the first two on every pull request, along with the Nix build):
 
 ```bash
-uv run python -m bench.run --model stub --out bench/preds/stub     # plumbing smoke test
-uv run python -m bench.score --gt bench/cases --preds bench/preds/stub
+uv run pytest -q
+nix shell --inputs-from . nixpkgs#nodejs -c node --test tests/hit-test.test.cjs
+nix shell --inputs-from . nixpkgs#geckodriver -c \
+  uv run --with selenium python scripts/ux_browser.py      # two Firefox sessions on one link
+AXISPLIT_TEST_DATABASE_URL='postgresql+asyncpg://…/axisplit_test' \
+  uv run pytest -q tests/test_ux.py                         # on Postgres; that database is emptied
 ```
 
-Put real receipt photos + `gt.json` in `bench/cases/<id>/` (photos are
-gitignored). See `bench/README.md` for candidate models and env vars.
+To run against Postgres in development, start it with `nix build .#postgres-init && ./result/bin/pg-dev`,
+then set `DATABASE_URL`.
 
-Results so far, and why the app uses PaddleOCR plus a decision model:
-[`docs/benchmarks.md`](docs/benchmarks.md).
+**Other ways to read receipts,** chosen with `AXISPLIT_OCR_BACKEND`:
+- **`vision`:** a vision model, served by the dev shell's `axisplit-ocr`.
+- **`http`:** a reader of your own, running as a service. Its API is in [`docs/reader-api.md`](docs/reader-api.md).
+
+To score a reader on the labelled receipts, see [`bench/README.md`](bench/README.md).
+
+**Design:**
+- [`docs/spec.md`](docs/spec.md): the domain model, flows and OCR pipeline.
+- [`docs/ux.md`](docs/ux.md): the interaction design.
+
+## License
+
+MIT, see [`LICENSE`](LICENSE). The bundled models keep their own licenses: vllm-d3-lite and the
+PP-OCRv6 models are Apache-2.0.

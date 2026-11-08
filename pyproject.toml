@@ -5,6 +5,7 @@ package = true
 name = "axisplit"
 version = "0.1.0"
 description = "Receipt-OCR powered bill splitting for groups"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
