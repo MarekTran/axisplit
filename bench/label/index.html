@@ -178,7 +178,8 @@ function fromPrefill() {
     note: "", currency: pre.lines.some((l) => /K[čc]|CZK/.test(l.text)) ? "CZK" : "EUR", receipt: {}, status: "todo" };
 }
 const entry = (e, auto) => ({ kind: e.kind || "item", label: e.label || "", price_cents: e.price_cents ?? null, quantity: e.quantity ?? null, unit_cents: e.unit_cents ?? null,
-  parent: e.parent ?? null, lines: [...(e.lines || [])], extra_quads: e.extra_quads || [], flag: e.flag || null, autoLabel: auto, autoPrice: auto });
+  parent: e.parent ?? null, lines: [...(e.lines || [])], extra_quads: e.extra_quads || [], flag: e.flag || null,
+  flag_resolved: e.flag_resolved || null, autoLabel: auto, autoPrice: auto });
 
 async function open(id) {
   if (dirty && !confirm("Discard unsaved changes on " + cur + "?")) { $("pick").value = cur; return; }
@@ -324,7 +325,10 @@ function remove(i) {
 }
 document.querySelector("aside").addEventListener("click", (ev) => {
   if (ev.target.dataset.del !== undefined) { remove(+ev.target.dataset.del); return; }
-  if (ev.target.dataset.resolve !== undefined) { entryOf(ev.target.dataset.resolve === "total" ? "total" : +ev.target.dataset.resolve).flag = null; dirty = true; render(); return; }
+  if (ev.target.dataset.resolve !== undefined) {  // the question is kept, as flag_resolved
+    const e = entryOf(ev.target.dataset.resolve === "total" ? "total" : +ev.target.dataset.resolve);
+    e.flag_resolved = e.flag; e.flag = null; dirty = true; render(); return;
+  }
   const k = rowKey(ev.target); if (k !== undefined && k !== sel) { sel = k; render(); }
 });
 document.querySelector("aside").addEventListener("change", (ev) => {

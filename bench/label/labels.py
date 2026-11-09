@@ -20,7 +20,7 @@ lines it was read from, so its box follows the printed text:
 - parent: for a modifier, deposit or item discount, the index of the entry it belongs to.
 - lines: OCR line numbers (prefill), every line of the entry: name, wrapped name, quantity line,
   price. extra_quads: boxes drawn by hand where OCR missed text.
-- flag: a question for the reviewer, cleared once answered.
+- flag: a question for the reviewer. Once answered, it moves to flag_resolved, which nothing checks.
 
 The total is {"label", "price_cents", "lines", "extra_quads", "flag"}. The receipt is described by
 {"type", "qty_format", "unit_price_printed"}; status is todo, agent (labelled by an agent, not
