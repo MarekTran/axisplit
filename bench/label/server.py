@@ -24,6 +24,11 @@ def ids():
     return sorted(p.stem for p in (DATASET / "images").glob("*.jpg") if (DATASET / "prefill" / f"{p.stem}.json").exists())
 
 
+def known(rid):
+    """The receipt's id as found on disk, or None: an id from a URL never builds a path itself."""
+    return {i: i for i in ids()}.get(rid)
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -51,20 +56,23 @@ class Handler(BaseHTTPRequestHandler):
                 out.append({"id": rid, "status": label["status"] if label else "todo", "flags": flags})
             return self.send(200, {"dataset": DATASET.name, "receipts": out})
         m = re.fullmatch(rf"/api/receipt/{ID}", p)
-        if m:
-            saved, before = labels.load(DATASET, m[1]), DATASET / "labels-v1" / f"{m[1]}.json"
+        rid = known(m[1]) if m else None
+        if rid:
+            saved, before = labels.load(DATASET, rid), DATASET / "labels-v1" / f"{rid}.json"
             changed = labels.changes(json.loads(before.read_text()), saved) if saved and before.exists() else []
-            return self.send(200, {"prefill": labels.prefill(DATASET, m[1]), "saved": saved, "changes": changed})
+            return self.send(200, {"prefill": labels.prefill(DATASET, rid), "saved": saved, "changes": changed})
         m = re.fullmatch(rf"/img/{ID}\.jpg", p)
-        if m and (DATASET / "images" / f"{m[1]}.jpg").exists():
-            return self.send(200, (DATASET / "images" / f"{m[1]}.jpg").read_bytes(), "image/jpeg")
+        rid = known(m[1]) if m else None
+        if rid:
+            return self.send(200, (DATASET / "images" / f"{rid}.jpg").read_bytes(), "image/jpeg")
         self.send(404, {"error": "not found"})
 
     def do_POST(self):
         m = re.fullmatch(rf"/api/(check|receipt)/{ID}", self.path)
-        if not m:
+        rid = known(m[2]) if m else None
+        if not rid:
             return self.send(404, {"error": "not found"})
-        label, rid = self.body(), m[2]
+        label = self.body()
         label["id"] = rid
         pre = labels.prefill(DATASET, rid)
         problems = labels.check(label, pre)

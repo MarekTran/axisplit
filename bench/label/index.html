@@ -164,7 +164,7 @@ function owners() {
 async function loadIndex() {
   const data = await (await fetch("/api/index")).json();
   index = data.receipts; $("dsname").textContent = data.dataset;
-  $("pick").innerHTML = index.map((r) => `<option value="${r.id}">${MARK[r.status] || "?"} ${r.id}${r.flags ? ` (${r.flags} ⚑)` : ""}</option>`).join("");
+  $("pick").innerHTML = index.map((r) => `<option value="${esc(r.id)}">${MARK[r.status] || "?"} ${esc(r.id)}${r.flags ? ` (${r.flags} ⚑)` : ""}</option>`).join("");
   const n = (s) => index.filter((r) => r.status === s).length;
   $("progress").textContent = `${n("reviewed")} reviewed · ${n("agent")} to review · ${n("todo")} unlabelled · ${n("skip")} skipped`;
   if (cur) $("pick").value = cur;
@@ -179,7 +179,7 @@ const entry = (e, auto) => ({ kind: e.kind || "item", label: e.label || "", pric
 
 async function open(id) {
   if (dirty && !confirm("Discard unsaved changes on " + cur + "?")) { $("pick").value = cur; return; }
-  const data = await (await fetch("/api/receipt/" + id)).json();
+  const data = await (await fetch("/api/receipt/" + encodeURIComponent(id))).json();
   cur = id; pre = data.prefill; saved = data.saved; dirty = false;
   const src = saved || fromPrefill();
   entries = src.items.map((e) => entry(e, !saved));
@@ -192,7 +192,7 @@ async function open(id) {
     + (data.changes?.length ? `<div class="agentnote"><b>Changed from the earlier label.</b><ul>${data.changes.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : "");
   sel = entries.length ? 0 : "total";
   $("pick").value = id;
-  $("img").src = "/img/" + id + ".jpg";
+  $("img").src = "/img/" + encodeURIComponent(id) + ".jpg";
   $("stage").classList.remove("flip");
   $("svg").setAttribute("viewBox", `0 0 ${pre.size[0]} ${pre.size[1]}`);
   $("msg").textContent = saved ? `${status}${saved.by ? " by " + saved.by : ""}` : "OCR guess, not saved";
@@ -246,7 +246,7 @@ function current(st) {
 let checkTimer;
 function scheduleCheck() { clearTimeout(checkTimer); checkTimer = setTimeout(runCheck, 200); }
 async function runCheck() {
-  const r = await fetch("/api/check/" + cur, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(current(status)) });
+  const r = await fetch("/api/check/" + encodeURIComponent(cur), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(current(status)) });
   const { problems } = await r.json(), el = $("check");
   const sum = entries.reduce((a, e) => a + (e.price_cents || 0), 0);
   el.className = "check " + (problems.length ? "off" : "ok");
@@ -352,7 +352,7 @@ async function save(st) {
   if (st === "skip") { const why = prompt("Why skip this receipt? (e.g. duplicate, unreadable)"); if (why === null) return; $("note").value = why; }
   const body = current(st === "draft" ? status : st);
   if (st === "reviewed") body.by = "human";
-  const r = await fetch("/api/receipt/" + cur, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const r = await fetch("/api/receipt/" + encodeURIComponent(cur), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   if (r.status === 409) { $("msg").textContent = "Not yet: fix the problems listed, or explain in the note."; runCheck(); return; }
   if (!r.ok) { $("msg").textContent = "Save failed: " + r.status; return; }
   dirty = false; status = body.status; saved = body; await loadIndex();
