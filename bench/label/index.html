@@ -28,6 +28,9 @@
   svg polygon.owned { fill: color-mix(in srgb, var(--c) 18%, transparent); stroke: var(--c); }
   svg polygon.sel { fill: color-mix(in srgb, var(--c) 32%, transparent); stroke: var(--c); stroke-width: 3.5; }
   svg polygon.extra { stroke-dasharray: 2 2; }
+  #svg.boxes-off { display: none; }
+  #svg.boxes-selected polygon:not(.sel) { stroke: transparent; fill: transparent; }
+  #svg.boxes-selected polygon:not(.sel):hover { stroke: rgb(255 255 255 / .8); }
   svg rect.drag { fill: rgb(80 140 240 / .2); stroke: #4f8fe8; stroke-width: 2; vector-effect: non-scaling-stroke; }
   aside { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--panel); }
   .scroll { flex: 1; overflow: auto; padding: .7rem .8rem; }
@@ -78,7 +81,7 @@
 </header>
 <main>
   <section class="photo" id="photo">
-    <div class="zoombar"><button id="zout">−</button><button id="zfit">Fit width</button><button id="zin">+</button><button id="rot" title="Turn the photo upside down (view only)">Rotate view 180°</button></div>
+    <div class="zoombar"><button id="zout">−</button><button id="zfit">Fit width</button><button id="zin">+</button><button id="rot" title="Turn the photo upside down (view only)">Rotate view 180°</button><button id="boxes" title="All boxes, none, or only the selected line's ( B )">Boxes: all</button></div>
     <div class="stage" id="stage"><img id="img" alt="" draggable="false"><svg id="svg"></svg></div>
   </section>
   <aside>
@@ -92,7 +95,7 @@
           <li><b>Price</b> = the line total as printed. <b>Qty</b> and <b>unit</b> only as printed: leave them empty when the receipt doesn't print them. A printed "1" is a quantity.</li>
           <li><b>Total</b> = the amount to pay as printed. Not the tip on a card slip, not the VAT table.</li>
           <li>OCR missed text? <kbd>Shift</kbd>+drag on the photo draws a box for the selected entry; click a drawn box to remove it.</li>
-          <li><kbd>N</kbd> item · <kbd>M</kbd> modifier for the selected item · <kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Del</kbd> delete · <kbd>Ctrl</kbd>+<kbd>S</kbd> reviewed &amp; next · <kbd>[</kbd> <kbd>]</kbd> receipts</li>
+          <li><kbd>N</kbd> item · <kbd>M</kbd> modifier for the selected item · <kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Del</kbd> delete · <kbd>Ctrl</kbd>+<kbd>S</kbd> reviewed &amp; next · <kbd>[</kbd> <kbd>]</kbd> receipts · <kbd>B</kbd> boxes: all, off, selected only</li>
         </ul>
       </details>
       <div id="agentnote"></div>
@@ -345,6 +348,15 @@ function addEntry(kind) {
 $("additem").onclick = () => addEntry("item"); $("addmod").onclick = () => addEntry("modifier"); $("adddep").onclick = () => addEntry("deposit");
 $("adddisc").onclick = () => addEntry("discount"); $("addfee").onclick = () => addEntry("fee");
 $("rot").onclick = () => $("stage").classList.toggle("flip");
+// Boxes in the way of reading the photo: all, off, or only the selected line's (the others stay clickable).
+const BOX_MODES = ["all", "off", "selected"];
+let boxMode = "all";
+function cycleBoxes() {
+  boxMode = BOX_MODES[(BOX_MODES.indexOf(boxMode) + 1) % BOX_MODES.length];
+  $("svg").className.baseVal = boxMode === "all" ? "" : "boxes-" + boxMode;
+  $("boxes").textContent = { all: "Boxes: all", off: "Boxes: off", selected: "Boxes: selected" }[boxMode];
+}
+$("boxes").onclick = cycleBoxes;
 $("reset").onclick = () => { if (!confirm("Start again from the OCR guess?")) return; const src = fromPrefill();
   entries = src.items.map((e) => entry(e, true)); total = entry({ ...src.total, kind: "total" }, true); sel = 0; dirty = true; render(); };
 
@@ -383,6 +395,7 @@ window.addEventListener("keydown", (ev) => {
     ev.preventDefault(); const keys = [...entries.keys(), "total"]; const i = keys.indexOf(sel);
     sel = keys[Math.max(0, Math.min(keys.length - 1, i + (ev.key === "ArrowDown" ? 1 : -1)))]; render();
   } else if ((ev.key === "Delete" || ev.key === "Backspace") && sel !== "total" && entries[sel]) remove(sel);
+  else if (ev.key === "b" || ev.key === "B") cycleBoxes();
   else if (ev.key === "[") step(-1); else if (ev.key === "]") step(1);
 });
 
