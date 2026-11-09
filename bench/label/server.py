@@ -3,7 +3,8 @@
     python -m bench.label.server DATASET [PORT]      # then open http://127.0.0.1:8095
 
 Saving as reviewed also writes cases/<id>/gt.json; a reviewed label must pass the checks, or say
-in its note why its lines don't add up.
+in its note why its lines don't add up. When DATASET/labels-v1/ holds the labels from before a
+relabelling, the page lists what changed in names, prices and the total.
 """
 
 import json
@@ -51,7 +52,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"dataset": DATASET.name, "receipts": out})
         m = re.fullmatch(rf"/api/receipt/{ID}", p)
         if m:
-            return self.send(200, {"prefill": labels.prefill(DATASET, m[1]), "saved": labels.load(DATASET, m[1])})
+            saved, before = labels.load(DATASET, m[1]), DATASET / "labels-v1" / f"{m[1]}.json"
+            changed = labels.changes(json.loads(before.read_text()), saved) if saved and before.exists() else []
+            return self.send(200, {"prefill": labels.prefill(DATASET, m[1]), "saved": saved, "changes": changed})
         m = re.fullmatch(rf"/img/{ID}\.jpg", p)
         if m and (DATASET / "images" / f"{m[1]}.jpg").exists():
             return self.send(200, (DATASET / "images" / f"{m[1]}.jpg").read_bytes(), "image/jpeg")

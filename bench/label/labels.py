@@ -30,6 +30,7 @@ reviewed.
 
 import json
 import math
+from collections import Counter
 from pathlib import Path
 
 KINDS = ("item", "modifier", "deposit", "discount", "fee")
@@ -132,6 +133,22 @@ def check(label: dict, pre: dict) -> list[str]:
     if not isinstance(receipt.get("unit_price_printed"), bool):
         problems.append("Unit price printed: true or false.")
     return problems
+
+
+def changes(before: dict, after: dict) -> list[str]:
+    """What relabelling changed in an earlier label: its lines' names and prices, and the total."""
+    def money(v):
+        return cents(v) if isinstance(v, int) else "none"
+
+    def key(e):
+        return (e.get("label") or "", e.get("price_cents"))
+    was, now = Counter(map(key, before.get("items", []))), Counter(map(key, after.get("items", [])))
+    out = [f"was {name!r} {money(p)}" for (name, p), n in sorted((was - now).items(), key=str) for _ in range(n)]
+    out += [f"now {name!r} {money(p)}" for (name, p), n in sorted((now - was).items(), key=str) for _ in range(n)]
+    t0, t1 = (before.get("total") or {}).get("price_cents"), (after.get("total") or {}).get("price_cents")
+    if t0 != t1:
+        out.append(f"total was {money(t0)}, now {money(t1)}")
+    return out
 
 
 def cents(v: int) -> str:

@@ -68,3 +68,12 @@ def test_metered_goods_may_round_their_unit_price():
     assert labels.check(fuel, PRE) == []  # 28,09 x 42,90 = 1205,06: the pump's price had more decimals
     fuel["items"][0]["unit_cents"] = 4250
     assert labels.check(fuel, PRE) == ["Entry 1: 28,09 × 42,50 = 1193,82, not 1205,10."]
+
+
+def test_relabelling_lists_what_changed_in_names_prices_and_total():
+    before = label()
+    after = label()
+    after["items"][2] = {**after["items"][2], "label": "Kofola 0,5l"}
+    after["total"] = {**after["total"], "price_cents": 1800}
+    assert labels.changes(before, after) == ["was 'Kofola' 4,80", "now 'Kofola 0,5l' 4,80", "total was 17,30, now 18,00"]
+    assert labels.changes(before, label()) == []

@@ -188,7 +188,8 @@ async function open(id) {
   $("note").value = src.note || ""; $("currency").value = src.currency || "EUR";
   const r = src.receipt || {};
   $("rtype").value = r.type || ""; $("qfmt").value = r.qty_format || ""; $("unitp").value = r.unit_price_printed == null ? "" : String(r.unit_price_printed);
-  $("agentnote").innerHTML = src.agent_notes ? `<div class="agentnote"><b>Agent's notes.</b> ${esc(src.agent_notes)}</div>` : "";
+  $("agentnote").innerHTML = (src.agent_notes ? `<div class="agentnote"><b>Agent's notes.</b> ${esc(src.agent_notes)}</div>` : "")
+    + (data.changes?.length ? `<div class="agentnote"><b>Changed from the earlier label.</b><ul>${data.changes.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : "");
   sel = entries.length ? 0 : "total";
   $("pick").value = id;
   $("img").src = "/img/" + id + ".jpg";
