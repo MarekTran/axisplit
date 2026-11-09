@@ -144,3 +144,32 @@ AXISPLIT_OCR_BACKEND=http AXISPLIT_READER_URL=http://127.0.0.1:9000 \
 python -m bench.vlm score --cases test_photos/new_batch/cases --preds test_photos/new_batch/preds \
     --split test_photos/new_batch/split.json:heldout
 ```
+
+## Labelling receipts (`bench/label/`)
+
+A dataset is a directory of photos, `DATASET/images/<id>.jpg`. Personal receipts stay local: keep
+their directory in `.git/info/exclude`.
+
+```bash
+PYTHONPATH=src:. uv run python -m bench.label.prefill DATASET   # OCR lines and a first guess per photo
+uv run python -m bench.label.server DATASET                      # label and review on http://127.0.0.1:8095
+uv run python -m bench.label.show DATASET ID                     # the same lines and checks in a terminal
+```
+
+**What a label records.** One entry per priced line, each pointing at the OCR lines it's printed on,
+so its box follows the text. The format is described in `bench/label/labels.py`.
+- **The kind of line:** item, modifier, deposit, discount or fee. A modifier, deposit or one-item discount says which item it belongs to.
+- **The line total**, and the quantity and unit price where the receipt prints them.
+- **For the receipt:** its type, where it prints quantities, and whether it prints unit prices.
+
+**The checks** run on every edit:
+- every entry has a name, a price and lines;
+- no OCR line is in two entries;
+- quantity × unit price is the line total;
+- modifiers and deposits name their item;
+- the lines add up to the total.
+
+**Statuses.** A label can be labelled by an agent (`agent`) or by a person, and it becomes ground
+truth, `cases/<id>/gt.json`, only once someone saves it as reviewed with no problems left. Anything
+an agent wasn't sure of is flagged, and a flag must be resolved before review. A total cut off by
+the photo is allowed when the note says so.

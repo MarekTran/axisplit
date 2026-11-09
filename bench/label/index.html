@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Receipt labels</title>
+<style>
+  :root { --bg: #f4f5f3; --panel: #fff; --text: #17201c; --muted: #5d6a64; --line: #dfe3de; --accent: #0e6b51; --bad: #b4261f; --good: #17683a; --warn: #8a5a00; --warn-bg: #fdf4e2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text); background: var(--bg); height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: .6rem; padding: .5rem .8rem; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0 .6rem 0 0; }
+  select, input, button, textarea { font: inherit; }
+  button { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: .35rem .7rem; cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  .progress { color: var(--muted); margin-left: auto; }
+  main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 560px; min-height: 0; }
+  .photo { position: relative; overflow: auto; background: #222; }
+  .zoombar { position: sticky; top: 0; left: 0; z-index: 3; display: flex; gap: .3rem; padding: .4rem; }
+  .zoombar button { padding: .2rem .55rem; }
+  .stage { position: relative; margin: 0 auto 2rem; user-select: none; transition: transform .2s; }
+  .stage.flip { transform: rotate(180deg); }
+  .stage img { display: block; width: 100%; }
+  .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  svg polygon { fill: transparent; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: pointer; }
+  svg polygon.free { stroke: rgb(255 255 255 / .55); stroke-dasharray: 4 3; }
+  svg polygon.free:hover { stroke: #fff; fill: rgb(255 255 255 / .12); }
+  svg polygon.owned { fill: color-mix(in srgb, var(--c) 18%, transparent); stroke: var(--c); }
+  svg polygon.sel { fill: color-mix(in srgb, var(--c) 32%, transparent); stroke: var(--c); stroke-width: 3.5; }
+  svg polygon.extra { stroke-dasharray: 2 2; }
+  svg rect.drag { fill: rgb(80 140 240 / .2); stroke: #4f8fe8; stroke-width: 2; vector-effect: non-scaling-stroke; }
+  aside { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--panel); }
+  .scroll { flex: 1; overflow: auto; padding: .7rem .8rem; }
+  details.help { margin-bottom: .6rem; color: var(--muted); }
+  details.help summary { cursor: pointer; color: var(--text); font-weight: 600; }
+  details.help li { margin: .15rem 0; }
+  .entry { padding: .25rem .3rem; border-radius: 8px; border: 1px solid transparent; }
+  .entry.sel { border-color: var(--c); background: color-mix(in srgb, var(--c) 8%, transparent); }
+  .entry.child { margin-left: 1.6rem; }
+  .row1 { display: grid; grid-template-columns: 14px 26px 96px minmax(0, 1fr) 84px 26px 24px; gap: .3rem; align-items: center; }
+  .row2 { display: flex; gap: .35rem; align-items: center; margin: .2rem 0 0 2.6rem; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+  .row2 select { max-width: 210px; }
+  .chip { width: 12px; height: 12px; border-radius: 3px; background: var(--c); }
+  .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .entry input, .entry select { width: 100%; padding: .25rem .35rem; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  .entry .row2 input { width: 64px; }
+  .entry .row2 input.unit { width: 80px; }
+  .entry .row2 select { width: auto; }
+  input.num { text-align: right; font-variant-numeric: tabular-nums; }
+  input.bad { border-color: var(--bad); }
+  .count { color: var(--muted); font-size: 12px; text-align: center; }
+  .entry button.del { padding: 0; width: 24px; height: 24px; border: 0; color: var(--muted); }
+  .flag { flex-basis: 100%; background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: .25rem .5rem; display: flex; gap: .5rem; align-items: center; }
+  .flag button { margin-left: auto; padding: .1rem .5rem; font-size: 12px; }
+  .add { display: flex; gap: .4rem; margin: .5rem 0 1rem; flex-wrap: wrap; }
+  h3 { font-size: 13px; margin: .8rem 0 .3rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .meta { display: grid; grid-template-columns: auto 1fr; gap: .3rem .6rem; align-items: center; }
+  .meta select { padding: .2rem .3rem; }
+  .check { padding: .55rem .7rem; border-radius: 8px; margin: .6rem 0; }
+  .check.ok { background: #e5f3e9; color: var(--good); font-weight: 600; }
+  .check.off { background: #fdeceb; color: var(--bad); }
+  .check ul { margin: .2rem 0 0; padding-left: 1.1rem; }
+  .agentnote { background: var(--warn-bg); color: var(--warn); padding: .45rem .6rem; border-radius: 8px; margin-bottom: .6rem; white-space: pre-wrap; }
+  textarea { width: 100%; min-height: 3.2em; border: 1px solid var(--line); border-radius: 8px; padding: .4rem; }
+  .actions { display: flex; gap: .4rem; padding: .6rem .8rem; border-top: 1px solid var(--line); align-items: center; }
+  .actions .msg { margin-left: auto; color: var(--muted); font-size: 13px; }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 .25rem; background: #f7f7f5; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Receipt labels <span id="dsname" style="color:var(--muted);font-weight:400"></span></h1>
+  <button id="prev" title="Previous receipt ( [ )">◀</button>
+  <select id="pick"></select>
+  <button id="next" title="Next receipt ( ] )">▶</button>
+  <button id="nextreview">Next to review</button>
+  <span class="progress" id="progress"></span>
+</header>
+<main>
+  <section class="photo" id="photo">
+    <div class="zoombar"><button id="zout">−</button><button id="zfit">Fit width</button><button id="zin">+</button><button id="rot" title="Turn the photo upside down (view only)">Rotate view 180°</button></div>
+    <div class="stage" id="stage"><img id="img" alt="" draggable="false"><svg id="svg"></svg></div>
+  </section>
+  <aside>
+    <div class="scroll">
+      <details class="help">
+        <summary>How to label</summary>
+        <ul>
+          <li>One entry per <b>priced line</b>, top to bottom. Select it, then click <i>every</i> OCR line that belongs to it: name, wrapped name, quantity line and price.</li>
+          <li><b>item</b>: something bought. <b>modifier</b>: an add-on or change printed for an item ("+ Cheese", "extra shot", "no onion", even at 0,00). <b>deposit</b>: bottle or packaging deposit. <b>discount</b>: a negative line. <b>fee</b>: service, tip or delivery that's part of the total.</li>
+          <li>Modifiers and deposits say which item they're <b>for</b>; a discount does too when it's for one item.</li>
+          <li><b>Price</b> = the line total as printed. <b>Qty</b> and <b>unit</b> only as printed: leave them empty when the receipt doesn't print them. A printed "1" is a quantity.</li>
+          <li><b>Total</b> = the amount to pay as printed. Not the tip on a card slip, not the VAT table.</li>
+          <li>OCR missed text? <kbd>Shift</kbd>+drag on the photo draws a box for the selected entry; click a drawn box to remove it.</li>
+          <li><kbd>N</kbd> item · <kbd>M</kbd> modifier for the selected item · <kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Del</kbd> delete · <kbd>Ctrl</kbd>+<kbd>S</kbd> reviewed &amp; next · <kbd>[</kbd> <kbd>]</kbd> receipts</li>
+        </ul>
+      </details>
+      <div id="agentnote"></div>
+      <h3>Lines</h3>
+      <div id="entries"></div>
+      <div class="add"><button id="additem">+ Item</button><button id="addmod">+ Modifier</button><button id="adddep">+ Deposit</button><button id="adddisc">+ Discount</button><button id="addfee">+ Fee</button><button id="reset" title="Throw away edits and start from the OCR guess">Reset to OCR guess</button></div>
+      <h3>Total</h3>
+      <div id="total"></div>
+      <h3>Receipt</h3>
+      <div class="meta">
+        <label for="currency">Currency</label><select id="currency"><option>EUR</option><option>CZK</option><option>GBP</option><option>USD</option><option>HUF</option><option>PLN</option></select>
+        <label for="rtype">Type</label><select id="rtype"><option value="">?</option><option>restaurant</option><option>bar</option><option>cafe</option><option>fast_food</option><option>supermarket</option><option>shop</option><option>other</option></select>
+        <label for="qfmt">Quantities printed</label><select id="qfmt"><option value="">?</option><option value="none">none</option><option value="prefix">before the name (2x Beer)</option><option value="suffix">after the name (Beer x2)</option><option value="column">in a column</option><option value="line">on their own line (3 ks * 0,79)</option><option value="mixed">mixed</option></select>
+        <label for="unitp">Unit prices printed</label><select id="unitp"><option value="">?</option><option value="true">yes</option><option value="false">no</option></select>
+      </div>
+      <div id="check" class="check"></div>
+      <h3>Note</h3>
+      <textarea id="note" placeholder="Required if it doesn't add up, e.g. 'total cut off by the photo edge'"></textarea>
+    </div>
+    <div class="actions">
+      <button class="primary" id="save" title="Ctrl+S">Reviewed &amp; next</button>
+      <button id="draft" title="Keep the current status">Save draft</button>
+      <button id="skip" title="Not usable as a test receipt">Skip receipt</button>
+      <span class="msg" id="msg"></span>
+    </div>
+  </aside>
+</main>
+<script>
+const COLORS = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#00a6a6", "#f032e6", "#9a7d0a", "#008080", "#9a6324", "#800000", "#2f7d32", "#000075", "#d35400"];
+const TOTAL_COLOR = "#1565c0";
+const KINDS = ["item", "modifier", "deposit", "discount", "fee"];
+const BELONG = ["modifier", "deposit", "discount"];
+const MARK = { todo: "·", agent: "🤖", reviewed: "✓", skip: "–" };
+let index = [], cur = null, pre = null, saved = null, entries = [], total = null, sel = 0, dirty = false, zoom = 1, status = "todo";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+const AMOUNT = /(?<![\d.,])-?\d{1,3}(?:[ .]\d{3})*[.,] ?\d{2}(?![\d])|(?<![\d.,])-?\d+[.,]\d{2}(?![\d])|(?<![\d.,])-?\d{1,3}(?: \d{3})*(?=\s*(?:Kč|Kc|KČ|CZK)\b)/g;
+function cents(tok) {
+  let t = tok.replace(/\s/g, ""); const neg = t.startsWith("-"); t = t.replace(/^-/, "");
+  let v = /[.,]\d{2}$/.test(t) ? parseInt(t.slice(0, -3).replace(/[.,]/g, "") || "0") * 100 + parseInt(t.slice(-2)) : parseInt(t.replace(/[.,]/g, "")) * 100;
+  return neg ? -v : v;
+}
+function parsePrice(s) {
+  s = (s || "").trim(); if (!s) return null;
+  const m = s.replace(/[€\s−]|Kč|CZK|EUR/g, (c) => c === "−" ? "-" : "").match(/^-?\d+(?:[.,]\d{1,2})?$/); if (!m) return NaN;
+  const neg = m[0].startsWith("-"); const t = m[0].replace("-", "");
+  const [w, f = ""] = t.split(/[.,]/); const v = parseInt(w) * 100 + parseInt((f + "00").slice(0, 2));
+  return neg ? -v : v;
+}
+function parseQty(s) { s = (s || "").trim(); if (!s) return null; const v = Number(s.replace(",", ".")); return v > 0 ? v : NaN; }
+const fmt = (c) => c == null || isNaN(c) ? "" : (c < 0 ? "−" : "") + Math.floor(Math.abs(c) / 100) + "," + String(Math.abs(c) % 100).padStart(2, "0");
+const fmtQty = (q) => q == null || isNaN(q) ? "" : String(q).replace(".", ",");
+function cleanLabel(text) {
+  return text.replace(/\([^)]*\)/g, " ").replace(AMOUNT, " ").replace(/\b(Kč|Kc|CZK|EUR)\b|€/g, " ")
+    .replace(/(?<!\w)\d+\s*(?:ks|x|×|pcs)(?!\w)/gi, " ").replace(/(?<!\w)(?:x|×|ks)(?!\w)/gi, " ").replace(/[=*]+/g, " ")
+    .replace(/\s+[A-D]\s*$/, " ").replace(/^\s*\d+(?:[.,]\d+)?\s*(?:x|×|ks|\.)?\s+/i, "").replace(/\s+/g, " ").trim().replace(/^[ .:-]+|[ .:-]+$/g, "");
+}
+const colorOf = (i) => i === "total" ? TOTAL_COLOR : COLORS[i % COLORS.length];
+const entryOf = (key) => key === "total" ? total : entries[key];
+
+function owners() {
+  const o = {};
+  entries.forEach((e, i) => e.lines.forEach((l) => (o[l] = i)));
+  total.lines.forEach((l) => (o[l] = "total"));
+  return o;
+}
+
+async function loadIndex() {
+  const data = await (await fetch("/api/index")).json();
+  index = data.receipts; $("dsname").textContent = data.dataset;
+  $("pick").innerHTML = index.map((r) => `<option value="${r.id}">${MARK[r.status] || "?"} ${r.id}${r.flags ? ` (${r.flags} ⚑)` : ""}</option>`).join("");
+  const n = (s) => index.filter((r) => r.status === s).length;
+  $("progress").textContent = `${n("reviewed")} reviewed · ${n("agent")} to review · ${n("todo")} unlabelled · ${n("skip")} skipped`;
+  if (cur) $("pick").value = cur;
+}
+
+function fromPrefill() {
+  return { items: pre.items.map((e) => ({ ...e, lines: [...e.lines], extra_quads: [] })), total: { ...pre.total, lines: [...pre.total.lines], extra_quads: [] },
+    note: "", currency: pre.lines.some((l) => /K[čc]|CZK/.test(l.text)) ? "CZK" : "EUR", receipt: {}, status: "todo" };
+}
+const entry = (e, auto) => ({ kind: e.kind || "item", label: e.label || "", price_cents: e.price_cents ?? null, quantity: e.quantity ?? null, unit_cents: e.unit_cents ?? null,
+  parent: e.parent ?? null, lines: [...(e.lines || [])], extra_quads: e.extra_quads || [], flag: e.flag || null, autoLabel: auto, autoPrice: auto });
+
+async function open(id) {
+  if (dirty && !confirm("Discard unsaved changes on " + cur + "?")) { $("pick").value = cur; return; }
+  const data = await (await fetch("/api/receipt/" + id)).json();
+  cur = id; pre = data.prefill; saved = data.saved; dirty = false;
+  const src = saved || fromPrefill();
+  entries = src.items.map((e) => entry(e, !saved));
+  total = entry({ ...src.total, kind: "total" }, !saved);
+  status = src.status || "todo";
+  $("note").value = src.note || ""; $("currency").value = src.currency || "EUR";
+  const r = src.receipt || {};
+  $("rtype").value = r.type || ""; $("qfmt").value = r.qty_format || ""; $("unitp").value = r.unit_price_printed == null ? "" : String(r.unit_price_printed);
+  $("agentnote").innerHTML = src.agent_notes ? `<div class="agentnote"><b>Agent's notes.</b> ${esc(src.agent_notes)}</div>` : "";
+  sel = entries.length ? 0 : "total";
+  $("pick").value = id;
+  $("img").src = "/img/" + id + ".jpg";
+  $("stage").classList.remove("flip");
+  $("svg").setAttribute("viewBox", `0 0 ${pre.size[0]} ${pre.size[1]}`);
+  $("msg").textContent = saved ? `${status}${saved.by ? " by " + saved.by : ""}` : "OCR guess, not saved";
+  render(); fit();
+}
+
+function parentOptions(e, i) {
+  const opts = entries.map((p, j) => p.kind === "item" && j !== i ? `<option value="${j}" ${e.parent === j ? "selected" : ""}>${j + 1}. ${esc(p.label || "?")}</option>` : "").join("");
+  return `<option value="">${e.kind === "discount" ? "whole receipt" : "which item?"}</option>${opts}`;
+}
+function row(e, i) {
+  const k = i === "total" ? "total" : i, isTotal = k === "total";
+  const kind = isTotal ? `<span style="color:var(--muted)">total</span>` : `<select data-f="kind">${KINDS.map((x) => `<option ${e.kind === x ? "selected" : ""}>${x}</option>`).join("")}</select>`;
+  const second = isTotal ? "" : `
+      <span>qty</span><input data-f="quantity" class="num ${isNaN(e.quantity) ? "bad" : ""}" value="${fmtQty(e.quantity)}" placeholder="—">
+      <span>×</span><input data-f="unit" class="num unit ${isNaN(e.unit_cents) ? "bad" : ""}" value="${fmt(e.unit_cents)}" placeholder="unit">
+      ${BELONG.includes(e.kind) ? `<span>for</span><select data-f="parent">${parentOptions(e, i)}</select>` : ""}`;
+  const flag = e.flag ? `<div class="flag">⚑ ${esc(e.flag)}<button data-resolve="${k}">Resolved</button></div>` : "";
+  return `<div class="entry ${k === sel ? "sel" : ""} ${BELONG.includes(e.kind) && e.parent != null ? "child" : ""}" data-i="${k}" style="--c:${colorOf(k)}">
+    <div class="row1"><span class="chip"></span><span class="n">${isTotal ? "T" : i + 1}</span>${kind}
+      <input data-f="label" value="${esc(e.label)}" placeholder="${isTotal ? "label, e.g. Celkem" : "name as printed"}">
+      <input data-f="price" class="num ${e.price_cents == null || isNaN(e.price_cents) ? "bad" : ""}" value="${fmt(e.price_cents)}" placeholder="0,00">
+      <span class="count" title="OCR lines + drawn boxes">${e.lines.length + e.extra_quads.length}</span>
+      ${isTotal ? "<span></span>" : `<button class="del" data-del="${i}" title="Delete entry">✕</button>`}</div>
+    <div class="row2">${second}${flag}</div></div>`;
+}
+
+function render() {
+  const own = owners(), [W, H] = pre.size;
+  const poly = (q) => q.map(([x, y]) => `${x * W},${y * H}`).join(" ");
+  let svg = pre.lines.map((l, i) => {
+    const o = own[i]; const cls = o === undefined ? "free" : o === sel ? "owned sel" : "owned";
+    const c = o === undefined ? "" : `style="--c:${colorOf(o)}"`;
+    return `<polygon data-line="${i}" class="${cls}" ${c} points="${poly(l.quad)}"><title>[${i}] ${esc(l.text)}</title></polygon>`;
+  });
+  const extras = (e, key) => e.extra_quads.map((q, k) => `<polygon class="owned extra ${key === sel ? "sel" : ""}" style="--c:${colorOf(key)}" data-extra="${key}:${k}" points="${poly(q)}"><title>drawn box: click to remove</title></polygon>`);
+  entries.forEach((e, i) => svg.push(...extras(e, i)));
+  svg.push(...extras(total, "total"));
+  $("svg").innerHTML = svg.join("");
+  $("entries").innerHTML = entries.map(row).join("") || `<p style="color:var(--muted)">No entries. <kbd>N</kbd> adds one.</p>`;
+  $("total").innerHTML = row(total, "total");
+  scheduleCheck();
+}
+
+function current(st) {
+  const strip = ({ autoLabel, autoPrice, ...e }) => e;
+  const receipt = { type: $("rtype").value || null, qty_format: $("qfmt").value || null, unit_price_printed: $("unitp").value === "" ? null : $("unitp").value === "true" };
+  const { kind, quantity, unit_cents, parent, ...t } = strip(total);
+  return { ...(saved || {}), status: st, items: entries.map(strip), total: t, note: $("note").value.trim(), currency: $("currency").value, receipt };
+}
+let checkTimer;
+function scheduleCheck() { clearTimeout(checkTimer); checkTimer = setTimeout(runCheck, 200); }
+async function runCheck() {
+  const r = await fetch("/api/check/" + cur, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(current(status)) });
+  const { problems } = await r.json(), el = $("check");
+  const sum = entries.reduce((a, e) => a + (e.price_cents || 0), 0);
+  el.className = "check " + (problems.length ? "off" : "ok");
+  el.innerHTML = problems.length ? `<b>${problems.length} to fix</b> · lines add up to ${fmt(sum)}<ul>${problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`
+    : `Ready: lines add up to the total, ${fmt(sum)}.`;
+  return problems;
+}
+
+// Name and price follow the entry's lines until you type them yourself.
+function rightmostAmount(lineIdx) {
+  const byX = [...lineIdx].sort((a, b) => Math.max(...pre.lines[b].quad.map((p) => p[0])) - Math.max(...pre.lines[a].quad.map((p) => p[0])));
+  for (const i of byX) { const a = [...pre.lines[i].text.replace(/\([^)]*\)/g, " ").matchAll(AMOUNT)]; if (a.length) return cents(a[a.length - 1][0]); }
+  return null;
+}
+function fillFromLines(e) {
+  const top = [...e.lines].sort((a, b) => pre.lines[a].quad[0][1] - pre.lines[b].quad[0][1]);
+  if (e.autoPrice || e.price_cents == null || isNaN(e.price_cents)) { e.price_cents = rightmostAmount(e.lines); e.autoPrice = true; }
+  if (e.autoLabel || !e.label) {
+    const names = top.map((i) => cleanLabel(pre.lines[i].text)).filter((s) => /\p{L}{2}/u.test(s));
+    e.label = e === total ? (names[0] || "") : names.join(" "); e.autoLabel = true;
+  }
+}
+function toggleLine(i) {
+  if (sel === undefined || (sel !== "total" && !entries[sel])) return;
+  const own = owners()[i], target = entryOf(sel);
+  if (own === sel) { target.lines = target.lines.filter((l) => l !== i); fillFromLines(target); }
+  else {
+    if (own !== undefined) { const from = entryOf(own); from.lines = from.lines.filter((l) => l !== i); fillFromLines(from); }
+    target.lines.push(i); fillFromLines(target);
+  }
+  dirty = true; render();
+}
+
+// photo: click lines, Shift+drag to draw a box
+let drag = null;
+function svgPoint(ev) {
+  const r = $("svg").getBoundingClientRect(), [W, H] = pre.size;
+  const x = (ev.clientX - r.left) / r.width * W, y = (ev.clientY - r.top) / r.height * H;
+  return $("stage").classList.contains("flip") ? [W - x, H - y] : [x, y];
+}
+$("svg").addEventListener("mousedown", (ev) => {
+  if (!ev.shiftKey) return;
+  ev.preventDefault(); drag = { a: svgPoint(ev) };
+  drag.el = document.createElementNS("http://www.w3.org/2000/svg", "rect"); drag.el.setAttribute("class", "drag"); $("svg").append(drag.el);
+});
+window.addEventListener("mousemove", (ev) => {
+  if (!drag) return; const b = svgPoint(ev);
+  const [x, y, w, h] = [Math.min(drag.a[0], b[0]), Math.min(drag.a[1], b[1]), Math.abs(b[0] - drag.a[0]), Math.abs(b[1] - drag.a[1])];
+  Object.entries({ x, y, width: w, height: h }).forEach(([k, v]) => drag.el.setAttribute(k, v));
+});
+window.addEventListener("mouseup", (ev) => {
+  if (!drag) return; const b = svgPoint(ev), a = drag.a, [W, H] = pre.size; drag.el.remove(); drag = null;
+  if (Math.abs(b[0] - a[0]) < 6 || Math.abs(b[1] - a[1]) < 4) return;
+  const r = (v) => Math.round(v * 1e5) / 1e5;
+  const [x1, x2, y1, y2] = [Math.min(a[0], b[0]) / W, Math.max(a[0], b[0]) / W, Math.min(a[1], b[1]) / H, Math.max(a[1], b[1]) / H];
+  entryOf(sel)?.extra_quads.push([[r(x1), r(y1)], [r(x2), r(y1)], [r(x2), r(y2)], [r(x1), r(y2)]]);
+  dirty = true; render();
+});
+$("svg").addEventListener("click", (ev) => {
+  if (ev.shiftKey) return;
+  const p = ev.target.closest("polygon"); if (!p) return;
+  if (p.dataset.extra) { const [k, j] = p.dataset.extra.split(":"); entryOf(k === "total" ? "total" : +k).extra_quads.splice(+j, 1); dirty = true; render(); return; }
+  toggleLine(+p.dataset.line);
+});
+
+// side panel
+function rowKey(el) { const r = el.closest(".entry"); return r ? (r.dataset.i === "total" ? "total" : +r.dataset.i) : undefined; }
+function remove(i) {
+  entries.splice(i, 1);
+  entries.forEach((e) => { if (e.parent === i) e.parent = null; else if (e.parent > i) e.parent -= 1; });
+  sel = Math.min(i, entries.length - 1); if (sel < 0) sel = "total"; dirty = true; render();
+}
+document.querySelector("aside").addEventListener("click", (ev) => {
+  if (ev.target.dataset.del !== undefined) { remove(+ev.target.dataset.del); return; }
+  if (ev.target.dataset.resolve !== undefined) { entryOf(ev.target.dataset.resolve === "total" ? "total" : +ev.target.dataset.resolve).flag = null; dirty = true; render(); return; }
+  const k = rowKey(ev.target); if (k !== undefined && k !== sel) { sel = k; render(); }
+});
+document.querySelector("aside").addEventListener("change", (ev) => {
+  const k = rowKey(ev.target); if (k === undefined) { dirty = true; scheduleCheck(); return; }
+  const e = entryOf(k), f = ev.target.dataset.f;
+  if (f === "price") { e.price_cents = parsePrice(ev.target.value); e.autoPrice = false; }
+  else if (f === "label") { e.label = ev.target.value.trim(); e.autoLabel = false; }
+  else if (f === "kind") { e.kind = ev.target.value; if (!BELONG.includes(e.kind)) e.parent = null; }
+  else if (f === "quantity") e.quantity = parseQty(ev.target.value);
+  else if (f === "unit") e.unit_cents = parsePrice(ev.target.value);
+  else if (f === "parent") e.parent = ev.target.value === "" ? null : +ev.target.value;
+  dirty = true; render();
+});
+$("note").addEventListener("input", () => { dirty = true; scheduleCheck(); });
+function addEntry(kind) {
+  const parent = BELONG.includes(kind) && sel !== "total" && entries[sel] ? (entries[sel].kind === "item" ? sel : entries[sel].parent) : null;
+  const at = sel === "total" || !entries.length ? entries.length : sel + 1;
+  entries.forEach((e) => { if (e.parent != null && e.parent >= at) e.parent += 1; });
+  entries.splice(at, 0, entry({ kind, parent }, true)); sel = at; dirty = true; render();
+}
+$("additem").onclick = () => addEntry("item"); $("addmod").onclick = () => addEntry("modifier"); $("adddep").onclick = () => addEntry("deposit");
+$("adddisc").onclick = () => addEntry("discount"); $("addfee").onclick = () => addEntry("fee");
+$("rot").onclick = () => $("stage").classList.toggle("flip");
+$("reset").onclick = () => { if (!confirm("Start again from the OCR guess?")) return; const src = fromPrefill();
+  entries = src.items.map((e) => entry(e, true)); total = entry({ ...src.total, kind: "total" }, true); sel = 0; dirty = true; render(); };
+
+async function save(st) {
+  if (st === "skip") { const why = prompt("Why skip this receipt? (e.g. duplicate, unreadable)"); if (why === null) return; $("note").value = why; }
+  const body = current(st === "draft" ? status : st);
+  if (st === "reviewed") body.by = "human";
+  const r = await fetch("/api/receipt/" + cur, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (r.status === 409) { $("msg").textContent = "Not yet: fix the problems listed, or explain in the note."; runCheck(); return; }
+  if (!r.ok) { $("msg").textContent = "Save failed: " + r.status; return; }
+  dirty = false; status = body.status; saved = body; await loadIndex();
+  if (st === "draft") { $("msg").textContent = "Draft saved"; return; }
+  const at = index.findIndex((y) => y.id === cur);
+  const nxt = [...index.slice(at + 1), ...index.slice(0, at)].find((x) => x.status === "agent" || x.status === "todo");
+  if (nxt) open(nxt.id); else { $("msg").textContent = "Everything is reviewed 🎉"; render(); }
+}
+$("save").onclick = () => save("reviewed"); $("draft").onclick = () => save("draft"); $("skip").onclick = () => save("skip");
+
+// navigation & zoom
+const step = (d) => { const i = index.findIndex((r) => r.id === cur); open(index[(i + d + index.length) % index.length].id); };
+$("prev").onclick = () => step(-1); $("next").onclick = () => step(1);
+$("pick").onchange = (ev) => open(ev.target.value);
+$("nextreview").onclick = () => { const n = index.find((r) => r.status === "agent") || index.find((r) => r.status === "todo"); if (n) open(n.id); };
+function applyZoom() { $("stage").style.width = ($("photo").clientWidth - 24) * zoom + "px"; }
+function fit() { zoom = 1; applyZoom(); }
+$("zfit").onclick = fit; $("zin").onclick = () => { zoom *= 1.25; applyZoom(); }; $("zout").onclick = () => { zoom /= 1.25; applyZoom(); };
+window.addEventListener("resize", applyZoom);
+window.addEventListener("beforeunload", (ev) => { if (dirty) { ev.preventDefault(); ev.returnValue = ""; } });
+window.addEventListener("keydown", (ev) => {
+  const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "s") { ev.preventDefault(); document.activeElement.blur(); save("reviewed"); return; }
+  if (typing) return;
+  if (ev.key === "n" || ev.key === "N") { ev.preventDefault(); addEntry("item"); }
+  else if (ev.key === "m" || ev.key === "M") { ev.preventDefault(); addEntry("modifier"); }
+  else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    ev.preventDefault(); const keys = [...entries.keys(), "total"]; const i = keys.indexOf(sel);
+    sel = keys[Math.max(0, Math.min(keys.length - 1, i + (ev.key === "ArrowDown" ? 1 : -1)))]; render();
+  } else if ((ev.key === "Delete" || ev.key === "Backspace") && sel !== "total" && entries[sel]) remove(sel);
+  else if (ev.key === "[") step(-1); else if (ev.key === "]") step(1);
+});
+
+loadIndex().then(() => { const n = index.find((r) => r.status === "agent") || index.find((r) => r.status === "todo") || index[0]; open(n.id); });
+</script>
+</body>
+</html>
