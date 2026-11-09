@@ -50,9 +50,9 @@ def load(dataset: Path, rid: str):
     return label
 
 
-def save(dataset: Path, label: dict):
+def save(dataset: Path, rid: str, label: dict):
     (dataset / "labels").mkdir(exist_ok=True)
-    (dataset / "labels" / f"{label['id']}.json").write_text(json.dumps(label, ensure_ascii=False, indent=1))
+    (dataset / "labels" / f"{rid}.json").write_text(json.dumps({**label, "id": rid}, ensure_ascii=False, indent=1))
 
 
 def prefill(dataset: Path, rid: str):

@@ -80,7 +80,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"problems": problems})
         if label.get("status") == "reviewed" and problems:
             return self.send(409, {"problems": problems})
-        labels.save(DATASET, label)
+        labels.save(DATASET, rid, label)
         gt = DATASET / "cases" / rid / "gt.json"
         if label.get("status") == "reviewed":
             gt.parent.mkdir(parents=True, exist_ok=True)
