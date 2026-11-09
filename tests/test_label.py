@@ -60,3 +60,11 @@ def test_ground_truth_keeps_the_new_fields_and_points_parents_at_gt_items():
     assert gt["discounts"] == [{**gt["discounts"][0], "price_cents": -100, "parent": 2}]
     assert sum(i["price_cents"] for i in gt["items"] + gt["discounts"]) == gt["total"]["price_cents"]
     assert gt["receipt"] == {"type": "bar", "qty_format": "line", "unit_price_printed": True}
+
+
+def test_metered_goods_may_round_their_unit_price():
+    fuel = label(items=[entry("item", "Natural 95", 120510, [0], quantity=28.09, unit_cents=4290)],
+                 total={"label": "Celkem", "price_cents": 120510, "lines": [5], "extra_quads": [], "flag": None})
+    assert labels.check(fuel, PRE) == []  # 28,09 x 42,90 = 1205,06: the pump's price had more decimals
+    fuel["items"][0]["unit_cents"] = 4250
+    assert labels.check(fuel, PRE) == ["Entry 1: 28,09 × 42,50 = 1193,82, not 1205,10."]

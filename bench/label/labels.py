@@ -93,8 +93,9 @@ def check(label: dict, pre: dict) -> list[str]:
             problems.append(f"{what}: unit price must be whole cents.")
         if unit is not None and qty is None:
             problems.append(f"{what}: a unit price needs its quantity.")
+        # A unit price is printed rounded to the cent: up to half a cent per unit (a fuel pump's 42,90 is 42,902).
         if isinstance(qty, (int, float)) and qty > 0 and isinstance(unit, int) and isinstance(price, int) \
-                and abs(round(qty * unit) - abs(price)) > 1:
+                and abs(round(qty * unit) - abs(price)) > max(1, math.ceil(qty / 2)):
             problems.append(f"{what}: {fmt_qty(qty)} × {cents(unit)} = {cents(round(qty * unit))}, not {cents(abs(price))}.")
         parent = e.get("parent")
         if parent is not None:
