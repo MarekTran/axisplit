@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag
+      - uses: astral-sh/setup-uv@v10.4.0  # no floating major tag
         with:
           enable-cache: true
       - run: uv sync --locked --all-extras
